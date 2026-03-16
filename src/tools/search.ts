@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { ContentStore } from "../store.js";
 import type { ToolResult } from "../server/session-stats.js";
 import { extractSnippet } from "../server/snippet-extractor.js";
+import { errorMessage } from "./tool-utils.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -149,7 +150,7 @@ export function registerSearchTool(server: McpServer, deps: ToolDeps): void {
           content: [{ type: "text" as const, text: output }],
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         return trackResponse("ctx_search", {
           content: [{ type: "text" as const, text: `Search error: ${message}` }],
           isError: true,
