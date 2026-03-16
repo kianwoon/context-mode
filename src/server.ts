@@ -75,9 +75,13 @@ function maybeIndexSessionEvents(store: ContentStore): void {
       try {
         store.index({ path: filePath, source: "session-events" });
         unlinkSync(filePath);
-      } catch { /* best-effort per file */ }
+      } catch (err) {
+        process.stderr.write(`[context-mode] session event indexing error: ${err instanceof Error ? err.message : err}\n`);
+      }
     }
-  } catch { /* best-effort */ }
+  } catch (err) {
+    process.stderr.write(`[context-mode] session event scan error: ${err instanceof Error ? err.message : err}\n`);
+  }
 }
 
 function getStore(): ContentStore {
@@ -175,7 +179,9 @@ async function main() {
       const written = adapter.writeRoutingInstructions(projectDir, pluginRoot);
       if (written) console.error(`Wrote routing instructions: ${written}`);
     }
-  } catch { /* best effort — don't block server startup */ }
+  } catch (err) {
+    process.stderr.write(`[context-mode] routing instructions error: ${err instanceof Error ? err.message : err}\n`);
+  }
 
   console.error(`Context Mode MCP server v${VERSION} running on stdio`);
   console.error(`Detected runtimes:\n${getRuntimeSummary(runtimes)}`);
