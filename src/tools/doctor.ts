@@ -7,8 +7,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { findPluginRoot } from "../plugin-root.js";
 import type { ToolResult } from "../server/session-stats.js";
 
 export interface ToolDeps {
@@ -29,7 +29,7 @@ export function registerDoctorTool(server: McpServer, deps: ToolDeps): void {
       inputSchema: z.object({}),
     },
     async () => {
-      const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+      const pluginRoot = findPluginRoot(import.meta.url);
       const cliPath = existsSync(resolve(pluginRoot, "cli.bundle.mjs"))
         ? resolve(pluginRoot, "cli.bundle.mjs")
         : resolve(pluginRoot, "build/cli.js");
