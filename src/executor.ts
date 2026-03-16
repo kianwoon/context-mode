@@ -49,6 +49,9 @@ export class PolyglotExecutor {
   /** PIDs of backgrounded processes — killed on cleanup to prevent zombies. */
   #backgroundedPids = new Set<number>();
 
+  /** Maximum number of backgrounded processes before oldest is evicted. */
+  static #MAX_BACKGROUND_PIDS = 10;
+
   constructor(opts?: {
     maxOutputBytes?: number;
     hardCapBytes?: number;
@@ -92,7 +95,7 @@ export class PolyglotExecutor {
       // Shell commands run in the project directory so git, relative paths,
       // and other project-aware tools work naturally. Non-shell languages
       // run in the temp directory where their script file is written.
-      const cwd = language === "shell" ? this.#projectRoot : tmpDir;
+      const cwd = this.#projectRoot;
       const result = await this.#spawn(cmd, cwd, timeout, background);
 
       // Skip tmpDir cleanup if process was backgrounded — it may still need files
@@ -233,7 +236,18 @@ export class PolyglotExecutor {
         if (background) {
           // Background mode: detach process, return partial output, keep running
           resolved = true;
-          if (proc.pid) this.#backgroundedPids.add(proc.pid);
+          if (proc.pid) {
+            // Evict oldest backgrounded process if limit reached
+            if (this.#backgroundedPids.size >= PolyglotExecutor.#MAX_BACKGROUND_PIDS) {
+              const oldest = this.#backgroundedPids.values().next().value;
+              if (oldest !== undefined) {
+                try { process.kill(-oldest, "SIGKILL"); } catch { /* already dead */ }
+                try { process.kill(oldest, "SIGKILL"); } catch { /* already dead */ }
+                this.#backgroundedPids.delete(oldest);
+              }
+            }
+            this.#backgroundedPids.add(proc.pid);
+          }
           proc.unref();
           proc.stdout!.destroy();
           proc.stderr!.destroy();
