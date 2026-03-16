@@ -2,7 +2,7 @@
   "mcpServers": {
     "context-mode": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/start.mjs"]
+      "args": ["/Users/kianwoonwong/.claude/plugins/cache/context-mode/context-mode/1.0.22/start.mjs"]
     }
   }
 }

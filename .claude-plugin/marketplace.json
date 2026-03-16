@@ -1,11 +1,11 @@
 {
   "name": "context-mode",
   "owner": {
-    "name": "Mert Koseoğlu",
-    "email": "code.bm.ksglu@gmail.com"
+    "name": "kianwoon",
+    "email": "kianwoon@users.noreply.github.com"
   },
   "metadata": {
-    "description": "Claude Code plugins by Mert Koseoğlu",
+    "description": "Claude Code plugins by kianwoon",
     "version": "1.0.22"
   },
   "plugins": [
@@ -15,7 +15,7 @@
       "description": "Claude Code MCP plugin that saves 98% of your context window. Sandboxed code execution in 11 languages, FTS5 knowledge base with BM25 ranking, and intent-driven search.",
       "version": "1.0.22",
       "author": {
-        "name": "Mert Koseoğlu"
+        "name": "kianwoon"
       },
       "category": "development",
       "keywords": [

@@ -92,7 +92,7 @@ export class PolyglotExecutor {
       // Shell commands run in the project directory so git, relative paths,
       // and other project-aware tools work naturally. Non-shell languages
       // run in the temp directory where their script file is written.
-      const cwd = language === "shell" ? this.#projectRoot : tmpDir;
+      const cwd = this.#projectRoot;
       const result = await this.#spawn(cmd, cwd, timeout, background);
 
       // Skip tmpDir cleanup if process was backgrounded — it may still need files
