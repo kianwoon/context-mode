@@ -6,10 +6,55 @@
  * search results instead of raw output.
  */
 import type { ContentStore } from "../store.js";
-import type { SessionStats } from "./session-stats.js";
+import type { ToolResult } from "./session-stats.js";
 
-export const INTENT_SEARCH_THRESHOLD = 5_000; // bytes — ~80-100 lines
+/** Threshold in bytes (~80-100 lines) above which intent search is triggered. */
+export const INTENT_SEARCH_THRESHOLD = 5_000;
 
+/**
+ * Index stdout output and return a success response with indexing stats.
+ * Used by execute-type tools to capture large command outputs.
+ *
+ * @param stdout - The command output to index
+ * @param source - Label for the indexed content (e.g., "npm test", "pytest")
+ * @param getStore - Factory function to get the ContentStore singleton
+ * @param trackIndexed - Callback to record indexed bytes in session stats
+ * @returns ToolResult with indexing summary
+ */
+export function indexStdout(
+  stdout: string,
+  source: string,
+  getStore: () => ContentStore,
+  trackIndexed: (bytes: number) => void,
+): ToolResult {
+  trackIndexed(Buffer.byteLength(stdout));
+  const store = getStore();
+  const indexed = store.index({ content: stdout, source });
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `Indexed ${indexed.totalChunks} sections (${indexed.codeChunks} with code) from: ${indexed.label}\nUse search(queries: ["..."]) to query this content. Use source: "${indexed.label}" to scope results.`,
+      },
+    ],
+  };
+}
+
+/**
+ * Perform intent-driven search on execution output.
+ *
+ * Indexes the stdout output into the FTS5 store and returns search results
+ * matching the intent query instead of raw output. This keeps large outputs
+ * out of the context window while still making them queryable.
+ *
+ * @param stdout - The command output to index and search
+ * @param intent - The search query to match against indexed content
+ * @param source - Label for the indexed content
+ * @param getStore - Factory function to get the ContentStore singleton
+ * @param trackIndexed - Callback to record indexed bytes in session stats
+ * @param maxResults - Maximum number of search results to return (default: 5)
+ * @returns Formatted search results with previews
+ */
 export function intentSearch(
   stdout: string,
   intent: string,
@@ -66,4 +111,49 @@ export function intentSearch(
   lines.push("Use search(queries: [...]) to retrieve full content of any section.");
 
   return lines.join("\n");
+}
+
+/**
+ * Coerce a value to an array, handling double-serialization.
+ * If the value is a JSON string that parses to an array, return the parsed array.
+ * Otherwise return the value as-is (let Zod handle validation errors).
+ *
+ * Used by ctx_search and ctx_batch_execute to handle model responses that
+ * double-serialize the queries array.
+ *
+ * @param val - The value to coerce (typically from a Zod preprocess step)
+ * @returns The coerced value (array if successful JSON parse, otherwise original)
+ */
+export function coerceJsonArray(val: unknown): unknown {
+  if (typeof val === "string") {
+    try {
+      const parsed = JSON.parse(val);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Not valid JSON, let zod handle the error
+    }
+  }
+  return val;
+}
+
+/**
+ * Coerce commands array: handles double-serialization AND the case where
+ * the model passes plain command strings instead of {label, command} objects.
+ *
+ * Used by ctx_batch_execute to normalize model input into the expected
+ * {label: string, command: string}[] format.
+ *
+ * @param val - The value to coerce
+ * @returns Normalized array of {label, command} objects
+ */
+export function coerceCommandsArray(val: unknown): unknown {
+  const arr = coerceJsonArray(val);
+  if (Array.isArray(arr)) {
+    return arr.map((item, i) =>
+      typeof item === "string"
+        ? { label: `cmd_${i + 1}`, command: item }
+        : item
+    );
+  }
+  return arr;
 }

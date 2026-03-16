@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import type { ToolResult } from "../server/session-stats.js";
 import type { SessionStats } from "../server/session-stats.js";
+import { getWorktreeSuffix } from "../session/db.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -112,7 +113,8 @@ export function registerStatsTool(server: McpServer, deps: ToolDeps): void {
       try {
         const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
         const dbHash = createHash("sha256").update(projectDir).digest("hex").slice(0, 16);
-        const sessionDbPath = join(homedir(), ".claude", "context-mode", "sessions", `${dbHash}.db`);
+        const worktreeSuffix = getWorktreeSuffix();
+        const sessionDbPath = join(homedir(), ".claude", "context-mode", "sessions", `${dbHash}${worktreeSuffix}.db`);
 
         if (existsSync(sessionDbPath)) {
           const require = createRequire(import.meta.url);
