@@ -30,7 +30,7 @@ import {
 // Re-export for backward compat (tests import extractSnippet from here)
 export { extractSnippet, positionsFromHighlight } from "./server/snippet-extractor.js";
 
-const VERSION = "1.0.22";
+const VERSION = "1.1.0";
 
 // Prevent silent server death from unhandled async errors
 process.on("unhandledRejection", (err) => {
