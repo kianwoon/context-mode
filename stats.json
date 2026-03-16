@@ -1,7 +1,8 @@
 {
-  "message": "19.5k",
-  "npm": "19.5k",
-  "marketplace": "plugin",
-  "stars": 1,
-  "forks": 0
+  "schemaVersion": 1,
+  "label": "users",
+  "message": "30k+",
+  "color": "brightgreen",
+  "npm": "19.4k+",
+  "marketplace": "10.5k+"
 }

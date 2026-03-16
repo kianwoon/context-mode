@@ -73,6 +73,7 @@ Our CI runs on **Ubuntu, macOS, and Windows**. Before submitting:
 
 ## Test plan
 
+- [ ] Tests added to **existing** test files (do NOT create new test files — see [CONTRIBUTING.md](../CONTRIBUTING.md#test-file-organization))
 - [ ] `npm test` passes (631+ tests)
 - [ ] `npm run typecheck` passes
 - [ ] `/context-mode:ctx-doctor` — all checks PASS on my local build

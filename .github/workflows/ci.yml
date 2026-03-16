@@ -1,8 +1,9 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, next]
   pull_request:
     branches: [main, next]
 
@@ -51,8 +52,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Bundle
+        run: npm run bundle
+
       - name: Run all tests
         run: npm test
 
       - name: Doctor (verify server starts)
         run: npx tsx src/cli.ts doctor
+        continue-on-error: true

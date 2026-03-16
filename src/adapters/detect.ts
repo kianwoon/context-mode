@@ -10,6 +10,7 @@
  *   - Claude Code:    CLAUDE_PROJECT_DIR, CLAUDE_SESSION_ID | ~/.claude/
  *   - Gemini CLI:     GEMINI_PROJECT_DIR (hooks), GEMINI_CLI (MCP) | ~/.gemini/
  *   - OpenCode:       OPENCODE, OPENCODE_PID | ~/.config/opencode/
+ *   - OpenClaw:       OPENCLAW_HOME, OPENCLAW_PROJECT_DIR | ~/.openclaw/
  *   - Codex CLI:      CODEX_CI, CODEX_THREAD_ID | ~/.codex/
  *   - Cursor:         CURSOR_TRACE_ID (MCP), CURSOR_CLI (terminal) | ~/.cursor/
  *   - VS Code Copilot: VSCODE_PID, VSCODE_CWD | ~/.vscode/
@@ -20,11 +21,43 @@ import { resolve } from "node:path";
 import { homedir } from "node:os";
 
 import type { PlatformId, DetectionSignal, HookAdapter } from "./types.js";
+import { CLIENT_NAME_TO_PLATFORM } from "./client-map.js";
 
 /**
  * Detect the current platform by checking env vars and config dirs.
+ *
+ * @param clientInfo - Optional MCP clientInfo from initialize handshake.
+ *   When provided, takes highest priority (zero-config detection).
  */
-export function detectPlatform(): DetectionSignal {
+export function detectPlatform(clientInfo?: { name: string; version?: string }): DetectionSignal {
+  // ── Highest priority: MCP clientInfo ──────────────────
+  if (clientInfo?.name) {
+    const platform = CLIENT_NAME_TO_PLATFORM[clientInfo.name];
+    if (platform) {
+      return {
+        platform,
+        confidence: "high",
+        reason: `MCP clientInfo.name="${clientInfo.name}"`,
+      };
+    }
+  }
+
+  // ── Explicit platform override ────────────────────────
+  const platformOverride = process.env.CONTEXT_MODE_PLATFORM;
+  if (platformOverride) {
+    const validPlatforms: PlatformId[] = [
+      "claude-code", "gemini-cli", "opencode", "codex",
+      "vscode-copilot", "cursor", "antigravity", "kiro",
+    ];
+    if (validPlatforms.includes(platformOverride as PlatformId)) {
+      return {
+        platform: platformOverride as PlatformId,
+        confidence: "high",
+        reason: `CONTEXT_MODE_PLATFORM=${platformOverride} override`,
+      };
+    }
+  }
+
   // ── High confidence: environment variables ─────────────
 
   if (process.env.CLAUDE_PROJECT_DIR || process.env.CLAUDE_SESSION_ID) {
@@ -40,6 +73,14 @@ export function detectPlatform(): DetectionSignal {
       platform: "gemini-cli",
       confidence: "high",
       reason: "GEMINI_PROJECT_DIR or GEMINI_CLI env var set",
+    };
+  }
+
+  if (process.env.OPENCLAW_HOME || process.env.OPENCLAW_PROJECT_DIR) {
+    return {
+      platform: "openclaw",
+      confidence: "high",
+      reason: "OPENCLAW_HOME or OPENCLAW_PROJECT_DIR env var set",
     };
   }
 
@@ -111,6 +152,14 @@ export function detectPlatform(): DetectionSignal {
     };
   }
 
+  if (existsSync(resolve(home, ".openclaw"))) {
+    return {
+      platform: "openclaw",
+      confidence: "medium",
+      reason: "~/.openclaw/ directory exists",
+    };
+  }
+
   if (existsSync(resolve(home, ".config", "opencode"))) {
     return {
       platform: "opencode",
@@ -151,6 +200,11 @@ export async function getAdapter(platform?: PlatformId): Promise<HookAdapter> {
       return new OpenCodeAdapter();
     }
 
+    case "openclaw": {
+      const { OpenClawAdapter } = await import("./openclaw/index.js");
+      return new OpenClawAdapter();
+    }
+
     case "codex": {
       const { CodexAdapter } = await import("./codex/index.js");
       return new CodexAdapter();
@@ -164,6 +218,16 @@ export async function getAdapter(platform?: PlatformId): Promise<HookAdapter> {
     case "cursor": {
       const { CursorAdapter } = await import("./cursor/index.js");
       return new CursorAdapter();
+    }
+
+    case "antigravity": {
+      const { AntigravityAdapter } = await import("./antigravity/index.js");
+      return new AntigravityAdapter();
+    }
+
+    case "kiro": {
+      const { KiroAdapter } = await import("./kiro/index.js");
+      return new KiroAdapter();
     }
 
     default: {

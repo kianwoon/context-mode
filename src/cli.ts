@@ -111,8 +111,9 @@ export function toUnixPath(p: string): string {
 function getPluginRoot(): string {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
-  // build/cli.js → go up one level; cli.bundle.mjs at project root → stay here
-  if (__dirname.endsWith("/build") || __dirname.endsWith("\\build")) {
+  // build/cli.js or src/cli.ts → go up one level; cli.bundle.mjs at project root → stay here
+  if (__dirname.endsWith("/build") || __dirname.endsWith("\\build") ||
+      __dirname.endsWith("/src") || __dirname.endsWith("\\src")) {
     return resolve(__dirname, "..");
   }
   return __dirname;
@@ -237,8 +238,9 @@ async function doctor(): Promise<number> {
       p.log.success(color.green("Server test: PASS"));
     } else {
       criticalFails++;
+      const detail = result.stderr?.trim() ? ` (${result.stderr.trim().slice(0, 200)})` : "";
       p.log.error(
-        color.red("Server test: FAIL") + ` — exit ${result.exitCode}`,
+        color.red("Server test: FAIL") + ` — exit ${result.exitCode}${detail}`,
       );
     }
   } catch (err: unknown) {

@@ -10,6 +10,52 @@ import { SQLiteBase, defaultDBPath } from "../db-base.js";
 import type { PreparedStatement } from "../db-base.js";
 import type { SessionEvent } from "../types.js";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+
+// ─────────────────────────────────────────────────────────
+// Worktree isolation
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the worktree suffix to append to session identifiers.
+ * Returns empty string when running in the main working tree.
+ *
+ * Set CONTEXT_MODE_SESSION_SUFFIX to an explicit value to override
+ * (useful in CI environments or when git is unavailable).
+ * Set to empty string to disable isolation entirely.
+ */
+export function getWorktreeSuffix(): string {
+  const envSuffix = process.env.CONTEXT_MODE_SESSION_SUFFIX;
+  if (envSuffix !== undefined) {
+    return envSuffix ? `__${envSuffix}` : "";
+  }
+
+  try {
+    const cwd = process.cwd();
+    const mainWorktree = execFileSync(
+      "git",
+      ["worktree", "list", "--porcelain"],
+      {
+        encoding: "utf-8",
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    )
+      .split(/\r?\n/)
+      .find((l) => l.startsWith("worktree "))
+      ?.replace("worktree ", "")
+      ?.trim();
+
+    if (mainWorktree && cwd !== mainWorktree) {
+      const suffix = createHash("sha256").update(cwd).digest("hex").slice(0, 8);
+      return `__${suffix}`;
+    }
+  } catch {
+    // git not available or not a git repo — no suffix
+  }
+
+  return "";
+}
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -157,6 +203,7 @@ export class SessionDB extends SQLiteBase {
         consumed INTEGER NOT NULL DEFAULT 0
       );
     `);
+
   }
 
   protected prepareStatements(): void {
@@ -244,6 +291,7 @@ export class SessionDB extends SQLiteBase {
     // ── Cleanup ──
     p(S.getOldSessions,
       `SELECT session_id FROM session_meta WHERE started_at < datetime('now', ? || ' days')`);
+
   }
 
   // ═══════════════════════════════════════════

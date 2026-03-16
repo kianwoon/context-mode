@@ -102,7 +102,6 @@ const TOOL_ALIASES = {
   "grep_search": "Grep",
   "search_file_content": "Grep",
   "web_fetch": "WebFetch",
-  "activate_skill": "Agent",
   // OpenCode
   "bash": "Bash",
   "view": "Read",
@@ -122,6 +121,10 @@ const TOOL_ALIASES = {
   "Shell": "Bash",
   // VS Code Copilot
   "run_in_terminal": "Bash",
+  // Kiro CLI (https://kiro.dev/docs/cli/hooks/)
+  "fs_read": "Read",
+  "fs_write": "Write",
+  "execute_bash": "Bash",
 };
 
 /**
@@ -226,12 +229,14 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
   // ─── Agent/Task: inject context-mode routing into subagent prompts ───
   if (canonical === "Agent" || canonical === "Task") {
     const subagentType = toolInput.subagent_type ?? "";
-    const prompt = toolInput.prompt ?? "";
+    // Detect the correct field name for the prompt/request/objective/question/query
+    const fieldName = ["prompt", "request", "objective", "question", "query", "task"].find(f => f in toolInput) ?? "prompt";
+    const prompt = toolInput[fieldName] ?? "";
 
     const updatedInput =
       subagentType === "Bash"
-        ? { ...toolInput, prompt: prompt + ROUTING_BLOCK, subagent_type: "general-purpose" }
-        : { ...toolInput, prompt: prompt + ROUTING_BLOCK };
+        ? { ...toolInput, [fieldName]: prompt + ROUTING_BLOCK, subagent_type: "general-purpose" }
+        : { ...toolInput, [fieldName]: prompt + ROUTING_BLOCK };
 
     return { action: "modify", updatedInput };
   }
@@ -240,7 +245,7 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
   // Match both __execute and __ctx_execute (prefixed tool names)
   // Cursor can also surface the tool as MCP:ctx_execute_file.
   if (
-    (toolName.includes("context-mode") && /__(ctx_)?execute$/.test(toolName)) ||
+    (toolName.includes("context-mode") && /(?:__|\/)(ctx_)?execute$/.test(toolName)) ||
     /^MCP:(ctx_)?execute$/.test(toolName)
   ) {
     if (security && toolInput.language === "shell") {
@@ -262,7 +267,7 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
   // ─── MCP execute_file: check file path + code against deny patterns ───
   // Cursor can also surface the tool as MCP:ctx_execute_file.
   if (
-    (toolName.includes("context-mode") && /__(ctx_)?execute_file$/.test(toolName)) ||
+    (toolName.includes("context-mode") && /(?:__|\/)(ctx_)?execute_file$/.test(toolName)) ||
     /^MCP:(ctx_)?execute_file$/.test(toolName)
   ) {
     if (security) {
@@ -294,7 +299,7 @@ export function routePreToolUse(toolName, toolInput, projectDir) {
   }
 
   // ─── MCP batch_execute: check each command individually ───
-  if (toolName.includes("context-mode") && /__(ctx_)?batch_execute$/.test(toolName)) {
+  if (toolName.includes("context-mode") && /(?:__|\/)(ctx_)?batch_execute$/.test(toolName)) {
     if (security) {
       const commands = toolInput.commands ?? [];
       const policies = security.readBashPolicies(projectDir);

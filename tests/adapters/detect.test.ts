@@ -3,9 +3,12 @@ import { detectPlatform, getAdapter } from "../../src/adapters/detect.js";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code/index.js";
 import { GeminiCLIAdapter } from "../../src/adapters/gemini-cli/index.js";
 import { OpenCodeAdapter } from "../../src/adapters/opencode/index.js";
+import { OpenClawAdapter } from "../../src/adapters/openclaw/index.js";
 import { CodexAdapter } from "../../src/adapters/codex/index.js";
 import { VSCodeCopilotAdapter } from "../../src/adapters/vscode-copilot/index.js";
 import { CursorAdapter } from "../../src/adapters/cursor/index.js";
+import { AntigravityAdapter } from "../../src/adapters/antigravity/index.js";
+import { KiroAdapter } from "../../src/adapters/kiro/index.js";
 
 // ─────────────────────────────────────────────────────────
 // detectPlatform — env var detection
@@ -23,6 +26,8 @@ describe("detectPlatform", () => {
     delete process.env.GEMINI_CLI;
     delete process.env.OPENCODE;
     delete process.env.OPENCODE_PID;
+    delete process.env.OPENCLAW_HOME;
+    delete process.env.OPENCLAW_PROJECT_DIR;
     delete process.env.CODEX_CI;
     delete process.env.CODEX_THREAD_ID;
     delete process.env.CURSOR_CWD;
@@ -30,6 +35,7 @@ describe("detectPlatform", () => {
     delete process.env.CURSOR_TRACE_ID;
     delete process.env.VSCODE_PID;
     delete process.env.VSCODE_CWD;
+    delete process.env.CONTEXT_MODE_PLATFORM;
     vi.restoreAllMocks();
   });
 
@@ -82,6 +88,22 @@ describe("detectPlatform", () => {
     process.env.OPENCODE_PID = "12345";
     const signal = detectPlatform();
     expect(signal.platform).toBe("opencode");
+    expect(signal.confidence).toBe("high");
+  });
+
+  // ── OpenClaw ───────────────────────────────────────────
+
+  it("returns openclaw when OPENCLAW_HOME is set", () => {
+    process.env.OPENCLAW_HOME = "/home/user/.openclaw";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("openclaw");
+    expect(signal.confidence).toBe("high");
+  });
+
+  it("returns openclaw when OPENCLAW_PROJECT_DIR is set", () => {
+    process.env.OPENCLAW_PROJECT_DIR = "/some/project";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("openclaw");
     expect(signal.confidence).toBe("high");
   });
 
@@ -141,12 +163,89 @@ describe("detectPlatform", () => {
     expect(signal.confidence).toBe("high");
   });
 
+  // ── MCP clientInfo detection ─────────────────────────────
+
+  it("returns antigravity when clientInfo name is antigravity-client", () => {
+    const signal = detectPlatform({ name: "antigravity-client", version: "1.0" });
+    expect(signal.platform).toBe("antigravity");
+    expect(signal.confidence).toBe("high");
+    expect(signal.reason).toContain("clientInfo");
+  });
+
+  it("returns kiro when clientInfo name is Kiro CLI", () => {
+    const signal = detectPlatform({ name: "Kiro CLI", version: "1.0.0" });
+    expect(signal.platform).toBe("kiro");
+    expect(signal.confidence).toBe("high");
+  });
+
+  it("returns gemini-cli when clientInfo name is gemini-cli-mcp-client", () => {
+    const signal = detectPlatform({ name: "gemini-cli-mcp-client", version: "1.0" });
+    expect(signal.platform).toBe("gemini-cli");
+    expect(signal.confidence).toBe("high");
+  });
+
+  it("returns cursor when clientInfo name is cursor-vscode", () => {
+    const signal = detectPlatform({ name: "cursor-vscode", version: "1.0" });
+    expect(signal.platform).toBe("cursor");
+    expect(signal.confidence).toBe("high");
+  });
+
+  it("clientInfo takes priority over env vars", () => {
+    process.env.CLAUDE_PROJECT_DIR = "/some/project";
+    const signal = detectPlatform({ name: "antigravity-client", version: "1.0" });
+    expect(signal.platform).toBe("antigravity");
+  });
+
+  it("unknown clientInfo falls through to env var detection", () => {
+    process.env.CLAUDE_PROJECT_DIR = "/some/project";
+    const signal = detectPlatform({ name: "some-unknown-client", version: "1.0" });
+    expect(signal.platform).toBe("claude-code");
+  });
+
+  // ── CONTEXT_MODE_PLATFORM override ──────────────────────
+
+  it("returns antigravity when CONTEXT_MODE_PLATFORM=antigravity", () => {
+    process.env.CONTEXT_MODE_PLATFORM = "antigravity";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("antigravity");
+    expect(signal.confidence).toBe("high");
+    expect(signal.reason).toContain("CONTEXT_MODE_PLATFORM");
+  });
+
+  it("returns kiro when CONTEXT_MODE_PLATFORM=kiro", () => {
+    process.env.CONTEXT_MODE_PLATFORM = "kiro";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("kiro");
+    expect(signal.confidence).toBe("high");
+    expect(signal.reason).toContain("CONTEXT_MODE_PLATFORM");
+  });
+
+  it("CONTEXT_MODE_PLATFORM takes priority over env vars", () => {
+    process.env.CONTEXT_MODE_PLATFORM = "antigravity";
+    process.env.CLAUDE_PROJECT_DIR = "/some/project";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("antigravity");
+  });
+
+  it("clientInfo takes priority over CONTEXT_MODE_PLATFORM", () => {
+    process.env.CONTEXT_MODE_PLATFORM = "codex";
+    const signal = detectPlatform({ name: "antigravity-client", version: "1.0" });
+    expect(signal.platform).toBe("antigravity");
+  });
+
+  it("invalid CONTEXT_MODE_PLATFORM is ignored", () => {
+    process.env.CONTEXT_MODE_PLATFORM = "not-a-platform";
+    process.env.CLAUDE_PROJECT_DIR = "/some/project";
+    const signal = detectPlatform();
+    expect(signal.platform).toBe("claude-code");
+  });
+
   // ── Fallback ───────────────────────────────────────────
 
   it("returns a valid platform as default when no env vars are set", () => {
     // No env vars set — result depends on which config dirs exist on this machine.
     const signal = detectPlatform();
-    expect(["claude-code", "gemini-cli", "codex", "cursor", "opencode"]).toContain(signal.platform);
+    expect(["claude-code", "gemini-cli", "codex", "cursor", "opencode", "openclaw"]).toContain(signal.platform);
   });
 });
 
@@ -170,6 +269,11 @@ describe("getAdapter", () => {
     expect(adapter).toBeInstanceOf(OpenCodeAdapter);
   });
 
+  it("returns OpenClawAdapter for openclaw", async () => {
+    const adapter = await getAdapter("openclaw");
+    expect(adapter).toBeInstanceOf(OpenClawAdapter);
+  });
+
   it("returns CodexAdapter for codex", async () => {
     const adapter = await getAdapter("codex");
     expect(adapter).toBeInstanceOf(CodexAdapter);
@@ -183,6 +287,16 @@ describe("getAdapter", () => {
   it("returns CursorAdapter for cursor", async () => {
     const adapter = await getAdapter("cursor");
     expect(adapter).toBeInstanceOf(CursorAdapter);
+  });
+
+  it("returns AntigravityAdapter for antigravity", async () => {
+    const adapter = await getAdapter("antigravity");
+    expect(adapter).toBeInstanceOf(AntigravityAdapter);
+  });
+
+  it("returns KiroAdapter for kiro", async () => {
+    const adapter = await getAdapter("kiro");
+    expect(adapter).toBeInstanceOf(KiroAdapter);
   });
 
   it("returns ClaudeCodeAdapter for unknown platform", async () => {

@@ -39,6 +39,9 @@ src/
     opencode/      → OpenCode adapter
     codex/         → Codex CLI adapter
     vscode-copilot/ → VS Code Copilot adapter
+  openclaw/
+    workspace-router.ts → Workspace path resolution for Pi Agent sessions
+  openclaw-plugin.ts   → OpenClaw gateway plugin entry (sync register)
 hooks/               → Plain JS hooks (.mjs) — no build needed
 configs/             → Per-platform install files (settings.json, mcp.json, CLAUDE.md, etc.)
 ```
@@ -262,6 +265,33 @@ We follow test-driven development. Every PR must include tests.
 2. **Green** -- Write the minimum code to make it pass
 3. **Refactor** -- Clean up while keeping tests green
 
+### Test file organization
+
+**Do NOT create new test files.** Add your tests to the existing file that covers the same domain. We maintain a small number of well-organized test files — one per adapter, one per core module. Creating a new file per feature or per PR leads to fragmentation that makes the suite harder to navigate and maintain.
+
+| Domain | Test File |
+|---|---|
+| Adapters | `tests/adapters/<platform>.test.ts` |
+| Client detection | `tests/adapters/detect.test.ts`, `tests/adapters/client-map.test.ts` |
+| Search & FTS5 | `tests/core/search.test.ts` |
+| Server & tools | `tests/core/server.test.ts` |
+| CLI & bundle | `tests/core/cli.test.ts` |
+| Routing | `tests/core/routing.test.ts` |
+| Hook routing | `tests/hooks/core-routing.test.ts` |
+| Hook formatting | `tests/hooks/formatters.test.ts` |
+| Hook integration | `tests/hooks/integration.test.ts` |
+| Session DB | `tests/session/session-db.test.ts` |
+| Session extract | `tests/session/session-extract.test.ts` |
+| Session snapshot | `tests/session/session-snapshot.test.ts` |
+| Session continuity | `tests/session/continuity.test.ts` |
+| Session pipeline | `tests/session/session-pipeline.test.ts` |
+| Executor | `tests/executor.test.ts` |
+| Store/Search | `tests/store.test.ts` |
+| Security | `tests/security.test.ts` |
+| OpenClaw plugin | `tests/plugins/openclaw.test.ts` |
+
+If your change doesn't fit any existing file, discuss with the maintainer before creating a new one.
+
 ### Output quality matters
 
 When your change affects tool output (execute, search, fetch_and_index, etc.), always compare before and after:
@@ -269,6 +299,41 @@ When your change affects tool output (execute, search, fetch_and_index, etc.), a
 1. Run the same prompt **before** your change (on `main`)
 2. Run it **again** with your change
 3. Include both outputs in your PR
+
+## Testing the OpenClaw Adapter
+
+The OpenClaw adapter has its own test suite and installation workflow.
+
+### Running tests
+
+```bash
+npx vitest run tests/plugins/openclaw.test.ts tests/adapters/openclaw.test.ts
+```
+
+These tests run without a live OpenClaw instance — they mock the plugin API.
+
+### Local OpenClaw testing
+
+To test against a running OpenClaw gateway:
+
+1. Install the plugin:
+   ```bash
+   scripts/install-openclaw-plugin.sh [OPENCLAW_STATE_DIR]
+   ```
+
+2. Rebuild native dependencies for the system Node version:
+   ```bash
+   npm rebuild better-sqlite3
+   ```
+
+3. Restart the gateway (SIGUSR1 triggers config reload):
+   ```bash
+   kill -USR1 $(pgrep -f "node.*openclaw/dist/index.js")
+   ```
+
+4. Open a Pi Agent session and verify hooks fire by checking the debug log output.
+
+See [`docs/adapters/openclaw.md`](docs/adapters/openclaw.md) for hook registration details and known upstream issues.
 
 ## Submitting a Bug Report
 

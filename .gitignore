@@ -7,10 +7,12 @@ packages/*/dist/
 *.db
 server.bundle.mjs
 cli.bundle.mjs
+package-lock.json
 hooks/session-extract.bundle.mjs
 hooks/session-snapshot.bundle.mjs
 hooks/session-db.bundle.mjs
 gh-cli-cache/
 tasks/
 .playwright-mcp/
+AGENTS.md
 context-mode-guidance-*/
