@@ -2,7 +2,16 @@
 
 **The other half of the context problem.**
 
-[![users](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fkianwoon%2Fcontext-mode%40main%2Fstats.json&query=%24.message&label=users&color=brightgreen)](https://www.npmjs.com/package/context-mode) [![npm](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fkianwoon%2Fcontext-mode%40main%2Fstats.json&query=%24.npm&label=npm&color=blue)](https://www.npmjs.com/package/context-mode) [![marketplace](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fkianwoon%2Fcontext-mode%40main%2Fstats.json&query=%24.marketplace&label=marketplace&color=blue)](https://github.com/kianwoon/context-mode) [![GitHub stars](https://img.shields.io/github/stars/kianwoon/context-mode?style=flat&color=yellow)](https://github.com/kianwoon/context-mode/stargazers) [![GitHub forks](https://img.shields.io/github/forks/kianwoon/context-mode?style=flat&color=blue)](https://github.com/kianwoon/context-mode/network/members) [![Last commit](https://img.shields.io/github/last-commit/kianwoon/context-mode?color=green)](https://github.com/kianwoon/context-mode/commits) [![License: ELv2](https://img.shields.io/badge/License-ELv2-blue.svg)](LICENSE)
+[![users](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fmksglu%2Fcontext-mode%40main%2Fstats.json&query=%24.message&label=users&color=brightgreen)](https://www.npmjs.com/package/context-mode) [![npm](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fmksglu%2Fcontext-mode%40main%2Fstats.json&query=%24.npm&label=npm&color=blue)](https://www.npmjs.com/package/context-mode) [![marketplace](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fcdn.jsdelivr.net%2Fgh%2Fmksglu%2Fcontext-mode%40main%2Fstats.json&query=%24.marketplace&label=marketplace&color=blue)](https://github.com/mksglu/context-mode) [![GitHub stars](https://img.shields.io/github/stars/mksglu/context-mode?style=flat&color=yellow)](https://github.com/mksglu/context-mode/stargazers) [![GitHub forks](https://img.shields.io/github/forks/mksglu/context-mode?style=flat&color=blue)](https://github.com/mksglu/context-mode/network/members) [![Last commit](https://img.shields.io/github/last-commit/mksglu/context-mode?color=green)](https://github.com/mksglu/context-mode/commits) [![License: ELv2](https://img.shields.io/badge/License-ELv2-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/discord/1478479412700909750?label=Discord&logo=discord&color=5865f2)](https://discord.gg/DCN9jUgN5v)
+
+## Privacy & Architecture
+
+Context Mode is not a CLI output filter or a cloud analytics dashboard. It operates at the MCP protocol layer — raw data stays in a sandboxed subprocess and never enters your context window. Web pages, API responses, file analysis, Playwright snapshots, log files — everything is processed in complete isolation.
+
+**Nothing leaves your machine.** No telemetry, no cloud sync, no usage tracking, no account required. Your code, your prompts, your session data — all local. The SQLite databases live in your home directory and die when you're done.
+
+This is a deliberate architectural choice, not a missing feature. Context optimization should happen at the source, not in a dashboard behind a per-seat subscription. Privacy-first is our philosophy — and every design decision follows from it. [License →](#license)
 
 ## The Problem
 
@@ -23,7 +32,7 @@ https://github.com/user-attachments/assets/07013dbf-07c0-4ef1-974a-33ea1207637b
 **Step 1 — Install the plugin:**
 
 ```bash
-/plugin marketplace add kianwoon/context-mode
+/plugin marketplace add mksglu/context-mode
 /plugin install context-mode@context-mode
 ```
 
@@ -732,10 +741,10 @@ Commands chained with `&&`, `;`, or `|` are split — each part is checked separ
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and TDD guidelines.
 
 ```bash
-git clone https://github.com/kianwoon/context-mode.git
+git clone https://github.com/mksglu/context-mode.git
 cd context-mode && npm install && npm test
 ```
 
 ## License
 
-[Elastic License 2.0 (ELv2)](LICENSE) — free to use, modify, and share. You may not rebrand and redistribute this software as a competing plugin, product, or managed service.
+Licensed under [Elastic License 2.0](LICENSE) (source-available). You can use it, fork it, modify it, and distribute it. Two things you can't do: offer it as a hosted/managed service, or remove the licensing notices. We chose ELv2 over MIT because MIT permits repackaging the code as a competing closed-source SaaS — ELv2 prevents that while keeping the source available to everyone.
