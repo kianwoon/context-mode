@@ -13,6 +13,7 @@ import type { ToolResult } from "../server/session-stats.js";
 import { checkDenyPolicy } from "../server/security-wrapper.js";
 import { extractSnippet } from "../server/snippet-extractor.js";
 import { errorMessage } from "./tool-utils.js";
+import { coerceJsonArray, coerceCommandsArray } from "../server/intent-search.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -36,7 +37,9 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
         "Provide all commands to run and all queries to search \u2014 everything happens in one round trip.",
       inputSchema: z.object({
         commands: z
-          .array(
+          .preprocess(
+            (v) => coerceCommandsArray(v),
+            z.array(
             z.object({
               label: z
                 .string()
@@ -53,7 +56,10 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
             "Commands to execute as a batch. Each runs sequentially, output is labeled with the section header.",
           ),
         queries: z
-          .array(z.string())
+          .preprocess(
+            (v) => coerceJsonArray(v),
+            z.array(z.string())
+          )
           .min(1)
           .describe(
             "Search queries to extract information from indexed output. Use 5-8 comprehensive queries. " +

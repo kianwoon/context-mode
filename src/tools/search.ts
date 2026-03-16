@@ -10,6 +10,7 @@ import type { ContentStore } from "../store.js";
 import type { ToolResult } from "../server/session-stats.js";
 import { extractSnippet } from "../server/snippet-extractor.js";
 import { errorMessage } from "./tool-utils.js";
+import { coerceJsonArray } from "../server/intent-search.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -35,8 +36,10 @@ export function registerSearchTool(server: McpServer, deps: ToolDeps): void {
         "TIPS: 2-4 specific terms per query. Use 'source' to scope results.",
       inputSchema: z.object({
         queries: z
-          .array(z.string())
-          .optional()
+          .preprocess(
+            (v) => coerceJsonArray(v),
+            z.array(z.string()).optional(),
+          )
           .describe("Array of search queries. Batch ALL questions in one call."),
         limit: z
           .number()
