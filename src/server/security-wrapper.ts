@@ -34,9 +34,10 @@ export function checkDenyPolicy(
         isError: true,
       });
     }
-  } catch {
-    // Security check failed — allow through (fail-open for server,
-    // hooks are the primary enforcement layer)
+  } catch (err) {
+    // Fail-open: hooks are the primary enforcement layer.
+    // Log so configuration errors aren't completely invisible.
+    process.stderr.write(`[context-mode] security check error: ${err instanceof Error ? err.message : err}\n`);
   }
   return null;
 }
@@ -66,8 +67,10 @@ export function checkNonShellDenyPolicy(
         });
       }
     }
-  } catch {
-    // Fail-open
+  } catch (err) {
+    // Fail-open: hooks are the primary enforcement layer.
+    // Log so configuration errors aren't completely invisible.
+    process.stderr.write(`[context-mode] security check error: ${err instanceof Error ? err.message : err}\n`);
   }
   return null;
 }
@@ -93,8 +96,10 @@ export function checkFilePathDenyPolicy(
         isError: true,
       });
     }
-  } catch {
-    // Fail-open
+  } catch (err) {
+    // Fail-open: hooks are the primary enforcement layer.
+    // Log so configuration errors aren't completely invisible.
+    process.stderr.write(`[context-mode] security check error: ${err instanceof Error ? err.message : err}\n`);
   }
   return null;
 }
