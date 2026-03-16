@@ -17,6 +17,7 @@ import {
 import { intentSearch, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
 import { classifyNonZeroExit } from "../exit-classify.js";
 import { hasBunRuntime, getAvailableLanguages, detectRuntimes } from "../runtime.js";
+import { errorMessage } from "./tool-utils.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -234,7 +235,7 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
           ],
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         return trackResponse("ctx_execute", {
           content: [
             { type: "text" as const, text: `Runtime error: ${message}` },

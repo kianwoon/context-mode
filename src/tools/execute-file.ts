@@ -17,6 +17,7 @@ import {
 } from "../server/security-wrapper.js";
 import { intentSearch, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
 import { classifyNonZeroExit } from "../exit-classify.js";
+import { errorMessage } from "./tool-utils.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -145,7 +146,7 @@ export function registerExecuteFileTool(server: McpServer, deps: ToolDeps): void
           ],
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         return trackResponse("ctx_execute_file", {
           content: [
             { type: "text" as const, text: `Runtime error: ${message}` },

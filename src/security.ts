@@ -220,7 +220,7 @@ function readSingleSettings(path: string): SecurityPolicy | null {
     return null;
   }
 
-  let parsed: any;
+  let parsed: Record<string, unknown>;
   try {
     parsed = JSON.parse(raw);
   } catch {
@@ -230,6 +230,8 @@ function readSingleSettings(path: string): SecurityPolicy | null {
   const perms = parsed?.permissions;
   if (!perms || typeof perms !== "object") return null;
 
+  const permsRec = perms as Record<string, unknown>;
+
   const filterBash = (arr: unknown): string[] => {
     if (!Array.isArray(arr)) return [];
     return arr.filter(
@@ -238,9 +240,9 @@ function readSingleSettings(path: string): SecurityPolicy | null {
   };
 
   return {
-    allow: filterBash(perms.allow),
-    deny: filterBash(perms.deny),
-    ask: filterBash(perms.ask),
+    allow: filterBash(permsRec.allow),
+    deny: filterBash(permsRec.deny),
+    ask: filterBash(permsRec.ask),
   };
 }
 
@@ -303,14 +305,15 @@ export function readToolDenyPatterns(
       return null;
     }
 
-    let parsed: any;
+    let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(raw);
     } catch {
       return null;
     }
 
-    const deny = parsed?.permissions?.deny;
+    const perms = (parsed?.permissions ?? {}) as Record<string, unknown>;
+    const deny = perms.deny;
     if (!Array.isArray(deny)) return [];
 
     const globs: string[] = [];
