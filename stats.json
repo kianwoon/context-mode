@@ -1,8 +1,7 @@
 {
-  "schemaVersion": 1,
-  "label": "users",
-  "message": "25.8k+",
-  "color": "brightgreen",
-  "npm": "16.7k+",
-  "marketplace": "9.1k+"
+  "message": "19.5k",
+  "npm": "19.5k",
+  "marketplace": "plugin",
+  "stars": 1,
+  "forks": 0
 }
