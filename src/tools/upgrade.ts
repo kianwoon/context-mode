@@ -6,7 +6,8 @@
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolResult } from "../server/session-stats.js";
 
@@ -30,7 +31,10 @@ export function registerUpgradeTool(server: McpServer, deps: ToolDeps): void {
     },
     async () => {
       const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-      const cmd = `node "${pluginRoot}/build/cli.js" upgrade`;
+      const cliPath = existsSync(resolve(pluginRoot, "cli.bundle.mjs"))
+        ? resolve(pluginRoot, "cli.bundle.mjs")
+        : resolve(pluginRoot, "build/cli.js");
+      const cmd = `node "${cliPath}" upgrade`;
 
       const text = [
         "## ctx-upgrade",
