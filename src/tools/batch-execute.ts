@@ -29,11 +29,7 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
     {
       title: "Batch Execute & Search",
       description:
-        "Execute multiple commands in ONE call, auto-index all output, and search with multiple queries. " +
-        "Returns search results directly \u2014 no follow-up calls needed.\n\n" +
-        "THIS IS THE PRIMARY TOOL. Use this instead of multiple execute() calls.\n\n" +
-        "One batch_execute call replaces 30+ execute calls + 10+ search calls.\n" +
-        "Provide all commands to run and all queries to search \u2014 everything happens in one round trip.",
+        "Execute multiple commands, auto-index all output, and search with multiple queries in ONE call. Returns search results directly.",
       inputSchema: z.object({
         commands: z
           .array(

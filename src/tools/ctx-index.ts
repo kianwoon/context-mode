@@ -24,18 +24,7 @@ export function registerIndexTool(server: McpServer, deps: ToolDeps): void {
     {
       title: "Index Content",
       description:
-        "Index documentation or knowledge content into a searchable BM25 knowledge base. " +
-        "Chunks markdown by headings (keeping code blocks intact) and stores in ephemeral FTS5 database. " +
-        "The full content does NOT stay in context — only a brief summary is returned.\n\n" +
-        "WHEN TO USE:\n" +
-        "- Documentation from Context7, Skills, or MCP tools (API docs, framework guides, code examples)\n" +
-        "- API references (endpoint details, parameter specs, response schemas)\n" +
-        "- MCP tools/list output (exact tool signatures and descriptions)\n" +
-        "- Skill prompts and instructions that are too large for context\n" +
-        "- README files, migration guides, changelog entries\n" +
-        "- Any content with code examples you may need to reference precisely\n\n" +
-        "After indexing, use 'search' to retrieve specific sections on-demand.\n" +
-        "Do NOT use for: log files, test output, CSV, build output — use 'execute_file' for those.",
+        "Index documentation or knowledge content into searchable FTS5 knowledge base. Chunks by headings. Content stays in sandbox — only summary returned.",
       inputSchema: z.object({
         content: z
           .string()

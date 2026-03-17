@@ -31,8 +31,7 @@ export function registerSearchTool(server: McpServer, deps: ToolDeps): void {
     {
       title: "Search Indexed Content",
       description:
-        "Search indexed content. Pass ALL search questions as queries array in ONE call.\n\n" +
-        "TIPS: 2-4 specific terms per query. Use 'source' to scope results.",
+        "Search indexed content. Pass ALL questions as queries array in ONE call.",
       inputSchema: z.object({
         queries: z
           .array(z.string())

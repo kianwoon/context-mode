@@ -14,10 +14,10 @@ import {
   checkDenyPolicy,
   checkNonShellDenyPolicy,
 } from "../server/security-wrapper.js";
-import { intentSearch, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
+import { intentSearch, autoSummarize, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
 import { classifyNonZeroExit } from "../exit-classify.js";
 import { hasBunRuntime, getAvailableLanguages, detectRuntimes } from "../runtime.js";
-import { errorMessage } from "./tool-utils.js";
+import { errorMessage, condenseError } from "./tool-utils.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -42,7 +42,7 @@ export function registerExecuteTool(server: McpServer, deps: ToolDeps): void {
     "ctx_execute",
     {
       title: "Execute Code",
-      description: `MANDATORY: Use for any command where output exceeds 20 lines. Execute code in a sandboxed subprocess. Only stdout enters context \u2014 raw data stays in the subprocess.${bunNote} Available: ${langList}.\n\nPREFER THIS OVER BASH for: API calls (gh, curl, aws), test runners (npm test, pytest), git queries (git log, git diff), data processing, and ANY CLI command that may produce large output. Bash should only be used for file mutations, git writes, and navigation.`,
+      description: `Execute code in a sandboxed subprocess. Only stdout enters context.${bunNote} Available: ${langList}.`,
       inputSchema: z.object({
         language: z
           .enum([
@@ -73,15 +73,12 @@ export function registerExecuteTool(server: McpServer, deps: ToolDeps): void {
           .boolean()
           .optional()
           .default(false)
-          .describe("Keep process running after timeout (for servers/daemons). Returns partial output without killing the process. IMPORTANT: Do NOT add setTimeout/self-close timers in background scripts \u2014 the process must stay alive until the timeout detaches it. For server+fetch patterns, prefer putting both server and fetch in ONE ctx_execute call instead of using background."),
+          .describe("Keep process running after timeout (for servers/daemons). Returns partial output without killing the process."),
         intent: z
           .string()
           .optional()
           .describe(
-            "What you're looking for in the output. When provided and output is large (>5KB), " +
-            "indexes output into knowledge base and returns section titles + previews \u2014 not full content. " +
-            "Use search(queries: [...]) to retrieve specific sections. Example: 'failing tests', 'HTTP 500 errors'." +
-            "\n\nTIP: Use specific technical terms, not just concepts. Check 'Searchable terms' in the response for available vocabulary.",
+            "What you're looking for. When provided and output is large (>5KB), indexes output and returns section previews. Example: 'failing tests'.",
           ),
       }),
     },
@@ -209,9 +206,18 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
               isError,
             });
           }
+          // Auto-index large error output even without intent
+          if (Buffer.byteLength(output) > INTENT_SEARCH_THRESHOLD) {
+            return trackResponse("ctx_execute", {
+              content: [
+                { type: "text" as const, text: autoSummarize(output, isError ? `execute:${language}:error` : `execute:${language}`, getStore, trackIndexed) },
+              ],
+              isError,
+            });
+          }
           return trackResponse("ctx_execute", {
             content: [
-              { type: "text" as const, text: output },
+              { type: "text" as const, text: condenseError(output) },
             ],
             isError,
           });
@@ -225,6 +231,15 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
           return trackResponse("ctx_execute", {
             content: [
               { type: "text" as const, text: intentSearch(stdout, intent, `execute:${language}`, getStore, trackIndexed) },
+            ],
+          });
+        }
+
+        // Auto-index large output even without intent
+        if (Buffer.byteLength(stdout) > INTENT_SEARCH_THRESHOLD) {
+          return trackResponse("ctx_execute", {
+            content: [
+              { type: "text" as const, text: autoSummarize(stdout, `execute:${language}`, getStore, trackIndexed) },
             ],
           });
         }
