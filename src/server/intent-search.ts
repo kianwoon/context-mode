@@ -41,6 +41,47 @@ export function indexStdout(
 }
 
 /**
+ * Auto-index large output without an intent query.
+ * When output exceeds INTENT_SEARCH_THRESHOLD but no intent is provided,
+ * indexes the output and returns a condensed summary with searchable terms
+ * instead of raw output.
+ *
+ * @param stdout - The output to index
+ * @param source - Label for the indexed content (e.g., "execute:python")
+ * @param getStore - Factory function to get the ContentStore singleton
+ * @param trackIndexed - Callback to record indexed bytes in session stats
+ * @returns Condensed summary string with section count and searchable terms
+ */
+export function autoSummarize(
+  stdout: string,
+  source: string,
+  getStore: () => ContentStore,
+  trackIndexed: (bytes: number) => void,
+): string {
+  const persistent = getStore();
+  const indexed = persistent.indexPlainText(stdout, source);
+  trackIndexed(Buffer.byteLength(stdout));
+
+  const totalLines = stdout.split("\n").length;
+  const totalKB = (Buffer.byteLength(stdout) / 1024).toFixed(1);
+
+  // Get distinctive terms as vocabulary hints for the LLM
+  const distinctiveTerms = persistent.getDistinctiveTerms(indexed.sourceId);
+
+  const lines = [
+    `Indexed ${indexed.totalChunks} sections from "${indexed.label}" (${totalLines} lines, ${totalKB}KB).`,
+  ];
+
+  if (distinctiveTerms.length > 0) {
+    lines.push(`Searchable terms: ${distinctiveTerms.join(", ")}`);
+  }
+
+  lines.push("Use search(queries: [...]) to retrieve specific sections.");
+
+  return lines.join("\n");
+}
+
+/**
  * Perform intent-driven search on execution output.
  *
  * Indexes the stdout output into the FTS5 store and returns search results

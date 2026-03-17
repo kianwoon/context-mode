@@ -15,9 +15,9 @@ import {
   checkNonShellDenyPolicy,
   checkFilePathDenyPolicy,
 } from "../server/security-wrapper.js";
-import { intentSearch, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
+import { intentSearch, autoSummarize, INTENT_SEARCH_THRESHOLD } from "../server/intent-search.js";
 import { classifyNonZeroExit } from "../exit-classify.js";
-import { errorMessage } from "./tool-utils.js";
+import { errorMessage, condenseError } from "./tool-utils.js";
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -34,7 +34,7 @@ export function registerExecuteFileTool(server: McpServer, deps: ToolDeps): void
     {
       title: "Execute File Processing",
       description:
-        "Read a file and process it without loading contents into context. The file is read into a FILE_CONTENT variable inside the sandbox. Only your printed summary enters context.\n\nPREFER THIS OVER Read/cat for: log files, data files (CSV, JSON, XML), large source files for analysis, and any file where you need to extract specific information rather than read the entire content.",
+        "Read a file and process it in a sandboxed subprocess. File contents available as FILE_CONTENT. Only your printed summary enters context.",
       inputSchema: z.object({
         path: z
           .string()
@@ -121,9 +121,18 @@ export function registerExecuteFileTool(server: McpServer, deps: ToolDeps): void
               isError,
             });
           }
+          // Auto-index large error output even without intent
+          if (Buffer.byteLength(output) > INTENT_SEARCH_THRESHOLD) {
+            return trackResponse("ctx_execute_file", {
+              content: [
+                { type: "text" as const, text: autoSummarize(output, isError ? `file:${path}:error` : `file:${path}`, getStore, trackIndexed) },
+              ],
+              isError,
+            });
+          }
           return trackResponse("ctx_execute_file", {
             content: [
-              { type: "text" as const, text: output },
+              { type: "text" as const, text: condenseError(output) },
             ],
             isError,
           });
@@ -136,6 +145,15 @@ export function registerExecuteFileTool(server: McpServer, deps: ToolDeps): void
           return trackResponse("ctx_execute_file", {
             content: [
               { type: "text" as const, text: intentSearch(stdout, intent, `file:${path}`, getStore, trackIndexed) },
+            ],
+          });
+        }
+
+        // Auto-index large output even without intent
+        if (Buffer.byteLength(stdout) > INTENT_SEARCH_THRESHOLD) {
+          return trackResponse("ctx_execute_file", {
+            content: [
+              { type: "text" as const, text: autoSummarize(stdout, `file:${path}`, getStore, trackIndexed) },
             ],
           });
         }

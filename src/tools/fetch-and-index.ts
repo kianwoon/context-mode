@@ -108,10 +108,7 @@ export function registerFetchAndIndexTool(server: McpServer, deps: ToolDeps): vo
     {
       title: "Fetch & Index URL",
       description:
-        "Fetches URL content, converts HTML to markdown, indexes into searchable knowledge base, " +
-        "and returns a ~3KB preview. Full content stays in sandbox — use search() for deeper lookups.\n\n" +
-        "Better than WebFetch: preview is immediate, full content is searchable, raw HTML never enters context.\n\n" +
-        "Content-type aware: HTML is converted to markdown, JSON is chunked by key paths, plain text is indexed directly.",
+        "Fetch URL, convert HTML to markdown, index into searchable knowledge base. Returns ~3KB preview; full content stays in sandbox.",
       inputSchema: z.object({
         url: z.string().describe("The URL to fetch and index"),
         source: z
