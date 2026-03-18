@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -208,6 +208,130 @@ export function splitChainedCommands(command: string): string[] {
 }
 
 // ==============================================================================
+// Settings Cache
+// ==============================================================================
+
+interface SettingsCacheEntry {
+  mtime: number | null;
+  data: SecurityPolicy | null;
+}
+
+interface SettingsCache {
+  localProject: SettingsCacheEntry;
+  sharedProject: SettingsCacheEntry;
+  global: SettingsCacheEntry;
+}
+
+const settingsCache: SettingsCache = {
+  localProject: { mtime: null, data: null },
+  sharedProject: { mtime: null, data: null },
+  global: { mtime: null, data: null },
+};
+
+interface RawSettingsCacheEntry {
+  mtime: number | null;
+  data: string[][] | null;
+}
+
+interface RawSettingsCache {
+  localProject: RawSettingsCacheEntry;
+  sharedProject: RawSettingsCacheEntry;
+  global: RawSettingsCacheEntry;
+}
+
+const rawSettingsCache: RawSettingsCache = {
+  localProject: { mtime: null, data: null },
+  sharedProject: { mtime: null, data: null },
+  global: { mtime: null, data: null },
+};
+
+/**
+ * Read settings file with mtime-based caching.
+ * Returns cached result if file modification time hasn't changed.
+ */
+function readCachedSettings(
+  filePath: string | null,
+  cache: SettingsCacheEntry,
+): SecurityPolicy | null {
+  if (!filePath) return null;
+
+  try {
+    const stat = statSync(filePath);
+    if (cache.mtime === stat.mtimeMs && cache.data !== null) {
+      return cache.data; // Cache hit — mtime unchanged
+    }
+    // Cache miss or first read
+    const result = readSingleSettings(filePath);
+    cache.mtime = stat.mtimeMs;
+    cache.data = result;
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read raw settings file with mtime-based caching.
+ * Used by readToolDenyPatterns which needs raw globs, not SecurityPolicy.
+ */
+function readCachedToolDenyGlobs(
+  filePath: string | null,
+  toolName: string,
+  cache: RawSettingsCacheEntry,
+): string[] | null {
+  if (!filePath) return null;
+
+  try {
+    const stat = statSync(filePath);
+    if (cache.mtime === stat.mtimeMs && cache.data !== null) {
+      const cached = cache.data;
+      // Return the globs for the requested tool from the cached result
+      const toolGlobs = cached
+        .filter((entry) => entry[0] === toolName)
+        .map((entry) => entry[1]);
+      return toolGlobs;
+    }
+    // Cache miss or first read — read the raw file and extract ALL tool deny globs
+    let raw: string;
+    try {
+      raw = readFileSync(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+
+    const perms = (parsed?.permissions ?? {}) as Record<string, unknown>;
+    const deny = perms.deny;
+    if (!Array.isArray(deny)) return [];
+
+    // Index all tool deny globs for this file
+    const allGlobs: string[][] = [];
+    for (const entry of deny) {
+      if (typeof entry !== "string") continue;
+      const tp = parseToolPattern(entry);
+      if (tp) {
+        allGlobs.push([tp.tool, tp.glob]);
+      }
+    }
+    cache.mtime = stat.mtimeMs;
+    cache.data = allGlobs;
+
+    // Return globs for the requested tool
+    return allGlobs
+      .filter((entry) => entry[0] === toolName)
+      .map((entry) => entry[1]);
+  } catch {
+    return null;
+  }
+}
+
+// ==============================================================================
 // Settings Reader
 // ==============================================================================
 
@@ -264,17 +388,17 @@ export function readBashPolicies(
 
   if (projectDir) {
     const localPath = resolve(projectDir, ".claude", "settings.local.json");
-    const localPolicy = readSingleSettings(localPath);
+    const localPolicy = readCachedSettings(localPath, settingsCache.localProject);
     if (localPolicy) policies.push(localPolicy);
 
     const sharedPath = resolve(projectDir, ".claude", "settings.json");
-    const sharedPolicy = readSingleSettings(sharedPath);
+    const sharedPolicy = readCachedSettings(sharedPath, settingsCache.sharedProject);
     if (sharedPolicy) policies.push(sharedPolicy);
   }
 
   const globalPath =
     globalSettingsPath ?? resolve(homedir(), ".claude", "settings.json");
-  const globalPolicy = readSingleSettings(globalPath);
+  const globalPolicy = readCachedSettings(globalPath, settingsCache.global);
   if (globalPolicy) policies.push(globalPolicy);
 
   return policies;
@@ -297,51 +421,29 @@ export function readToolDenyPatterns(
 ): string[][] {
   const result: string[][] = [];
 
-  const extractGlobs = (path: string): string[] | null => {
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf-8");
-    } catch {
-      return null;
-    }
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return null;
-    }
-
-    const perms = (parsed?.permissions ?? {}) as Record<string, unknown>;
-    const deny = perms.deny;
-    if (!Array.isArray(deny)) return [];
-
-    const globs: string[] = [];
-    for (const entry of deny) {
-      if (typeof entry !== "string") continue;
-      const tp = parseToolPattern(entry);
-      if (tp && tp.tool === toolName) {
-        globs.push(tp.glob);
-      }
-    }
-    return globs;
-  };
-
   if (projectDir) {
-    const localGlobs = extractGlobs(
+    const localGlobs = readCachedToolDenyGlobs(
       resolve(projectDir, ".claude", "settings.local.json"),
+      toolName,
+      rawSettingsCache.localProject,
     );
     if (localGlobs !== null) result.push(localGlobs);
 
-    const sharedGlobs = extractGlobs(
+    const sharedGlobs = readCachedToolDenyGlobs(
       resolve(projectDir, ".claude", "settings.json"),
+      toolName,
+      rawSettingsCache.sharedProject,
     );
     if (sharedGlobs !== null) result.push(sharedGlobs);
   }
 
   const globalPath =
     globalSettingsPath ?? resolve(homedir(), ".claude", "settings.json");
-  const globalGlobs = extractGlobs(globalPath);
+  const globalGlobs = readCachedToolDenyGlobs(
+    globalPath,
+    toolName,
+    rawSettingsCache.global,
+  );
   if (globalGlobs !== null) result.push(globalGlobs);
 
   return result;

@@ -1,5 +1,8 @@
 import { execSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export type Language =
   | "javascript"
@@ -36,6 +39,67 @@ export interface RuntimeMap {
 }
 
 const isWindows = process.platform === "win32";
+
+// --- Runtime detection cache ---
+
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+interface RuntimeCache {
+  pathHash: string;
+  runtimes: RuntimeMap;
+  cachedAt: string;
+}
+
+function hashPath(): string {
+  return createHash("sha256").update(process.env.PATH ?? "").digest("hex");
+}
+
+function getCacheFilePath(): string {
+  return join(homedir(), ".context-mode", "runtime-cache.json");
+}
+
+function readCache(): RuntimeMap | null {
+  try {
+    const cachePath = getCacheFilePath();
+    if (!existsSync(cachePath)) return null;
+
+    const raw = readFileSync(cachePath, "utf-8");
+    const cache: RuntimeCache = JSON.parse(raw);
+
+    // Validate cache structure
+    if (!cache.pathHash || !cache.runtimes || !cache.cachedAt) return null;
+
+    // Check PATH hash
+    if (cache.pathHash !== hashPath()) return null;
+
+    // Check age
+    const age = Date.now() - new Date(cache.cachedAt).getTime();
+    if (age > CACHE_MAX_AGE_MS) return null;
+
+    return cache.runtimes;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(runtimes: RuntimeMap): void {
+  try {
+    const cacheDir = join(homedir(), ".context-mode");
+    if (!existsSync(cacheDir)) {
+      mkdirSync(cacheDir, { recursive: true });
+    }
+    const cache: RuntimeCache = {
+      pathHash: hashPath(),
+      runtimes,
+      cachedAt: new Date().toISOString(),
+    };
+    writeFileSync(getCacheFilePath(), JSON.stringify(cache, null, 2), "utf-8");
+  } catch {
+    // Silent failure — cache is a best-effort optimisation
+  }
+}
+
+// --- Runtime detection (no cache) ---
 
 function commandExists(cmd: string): boolean {
   try {
@@ -93,7 +157,7 @@ function getVersion(cmd: string): string {
   }
 }
 
-export function detectRuntimes(): RuntimeMap {
+function detectRuntimesUncached(): RuntimeMap {
   const hasBun = commandExists("bun");
 
   return {
@@ -125,6 +189,27 @@ export function detectRuntimes(): RuntimeMap {
         : null,
     elixir: commandExists("elixir") ? "elixir" : null,
   };
+}
+
+/**
+ * Detect available language runtimes, using a disk cache when valid.
+ *
+ * Cache is stored at ~/.context-mode/runtime-cache.json.
+ * A cached result is considered valid when both:
+ *   - The SHA-256 hash of $PATH matches (runtime PATH changed)
+ *   - The cache is less than 24 hours old
+ *
+ * If the cache is missing, stale, or corrupted, fresh detection runs
+ * and the cache is updated. All cache I/O failures fall back silently
+ * to a fresh detection.
+ */
+export function detectRuntimes(): RuntimeMap {
+  const cached = readCache();
+  if (cached) return cached;
+
+  const runtimes = detectRuntimesUncached();
+  writeCache(runtimes);
+  return runtimes;
 }
 
 export function hasBunRuntime(): boolean {

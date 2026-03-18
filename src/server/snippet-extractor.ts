@@ -46,12 +46,39 @@ export function stripMarkers(highlighted: string): string {
   return highlighted.replaceAll(STX, "").replaceAll(ETX, "");
 }
 
+/**
+ * Detect content type from a sample and return an appropriate max length.
+ * Code-heavy content gets more room for complete functions; tables get
+ * wider windows for column alignment; prose uses the caller-supplied default.
+ */
+function detectContentMaxLen(content: string, defaultMax: number): number {
+  const sample = content.slice(0, 200);
+
+  // Code indicators: backtick fences, common code keywords, indentation, code punctuation
+  const codeIndicators = [
+    /```/,                    // code fences
+    /(?:function|const|let|var|class|import|export|def |return |if\s*\()/, // code keywords
+    /^\s{2,}\S/m,           // indented lines (2+ spaces)
+    /[{}();]/,               // code punctuation
+  ];
+  const codeScore = codeIndicators.filter(r => r.test(sample)).length;
+
+  // Table/structured indicators
+  const tableIndicators = [/\|.*\|/, /^\s*[-:]+$/m, /^\s*\d+\.\s/m];
+  const tableScore = tableIndicators.filter(r => r.test(sample)).length;
+
+  if (codeScore >= 2) return 3000;  // Code: give more room for complete functions
+  if (tableScore >= 2) return 2000; // Tables: wider for column alignment
+  return defaultMax;                 // Prose: use default (1500 or caller-specified)
+}
+
 export function extractSnippet(
   content: string,
   query: string,
-  maxLen = 1500,
+  maxLen?: number,
   highlighted?: string,
 ): string {
+  maxLen = maxLen ?? detectContentMaxLen(content, 1500);
   if (content.length <= maxLen) return content;
 
   // Derive match positions from FTS5 highlight markers when available
