@@ -64,13 +64,15 @@ export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
   process.stdin.on("error", onStdinClose);
 
   // P0: Parent liveness detection — IPC event or polling fallback
+  // When isParentAlive is explicitly injected (tests), always use polling
+  // so the injectable check is honored regardless of IPC availability.
   let timer: ReturnType<typeof setInterval> | undefined;
 
-  if (hasIpc) {
+  if (hasIpc && !opts.isParentAlive) {
     // Instant notification via IPC when parent disconnects
     process.on("disconnect", shutdown);
   } else {
-    // Polling fallback: periodic ppid check
+    // Polling: periodic ppid check (or injectable check for testing)
     const interval = opts.checkIntervalMs ?? 30_000;
     const check = opts.isParentAlive ?? defaultIsParentAlive;
     timer = setInterval(() => {
