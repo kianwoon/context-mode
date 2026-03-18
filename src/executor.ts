@@ -513,7 +513,7 @@ export class PolyglotExecutor {
       case "r":
         return `FILE_CONTENT_PATH <- ${escaped}\nfile_path <- FILE_CONTENT_PATH\nFILE_CONTENT <- paste(readLines("stdin", warn=FALSE), collapse="\\n")\n${code}`;
       case "elixir":
-        return `file_content_path = ${escaped}\nfile_path = file_content_path\n{:ok, file_content} = IO.read(:stdio, :all)\n${code}`;
+        return `file_content_path = ${escaped}\nfile_path = file_content_path\nfile_content = IO.read(:stdio, :all)\n${code}`;
     }
   }
 }

@@ -76,6 +76,7 @@ export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
     const interval = opts.checkIntervalMs ?? 30_000;
     const check = opts.isParentAlive ?? defaultIsParentAlive;
     timer = setInterval(() => {
+      if (stopped) return; // Guard against post-cleanup ticks
       if (!check()) shutdown();
     }, interval);
     timer.unref();
