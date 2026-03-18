@@ -19,6 +19,8 @@ import { readStdin } from "./core/stdin.mjs";
 import { routePreToolUse, initSecurity } from "./core/routing.mjs";
 import { formatDecision } from "./core/formatters.mjs";
 
+let matcherPatched = false;
+
 // ─── Manual recursive copy (avoids cpSync libuv crash on non-ASCII paths, Windows + Node 24) ───
 function copyDirSync(src, dest) {
   mkdirSync(dest, { recursive: true });
@@ -94,12 +96,18 @@ try {
       const hooks = settings.hooks?.PreToolUse;
       if (Array.isArray(hooks)) {
         let changed = false;
-        for (const entry of hooks) {
-          // Fix deprecated Task-only matcher → Agent|Task
-          if (entry.matcher && entry.matcher.includes("Task") && !entry.matcher.includes("Agent")) {
-            entry.matcher = entry.matcher.replace("Task", "Agent|Task");
-            changed = true;
+        // Fix deprecated Task-only matcher → Agent|Task (run once per process)
+        if (!matcherPatched) {
+          matcherPatched = true;
+          for (const entry of hooks) {
+            if (entry.matcher && entry.matcher.includes("Task") && !entry.matcher.includes("Agent")) {
+              entry.matcher = entry.matcher.replace("Task", "Agent|Task");
+              changed = true;
+            }
           }
+        }
+        // Fix hook paths to point to correct version dir
+        for (const entry of hooks) {
           for (const h of (entry.hooks || [])) {
             if (h.command?.includes("pretooluse.mjs") && !h.command.includes(targetDir)) {
               h.command = "node " + resolve(targetDir, "hooks", "pretooluse.mjs");
