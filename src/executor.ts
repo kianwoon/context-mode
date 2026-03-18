@@ -1,5 +1,5 @@
 import { spawn, execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -34,6 +34,8 @@ interface ExecuteOptions {
   timeout?: number;
   /** Keep process running after timeout instead of killing it. */
   background?: boolean;
+  /** Content to pipe via stdin to the child process. */
+  stdin?: string;
 }
 
 interface ExecuteFileOptions extends ExecuteOptions {
@@ -80,7 +82,7 @@ export class PolyglotExecutor {
   }
 
   async execute(opts: ExecuteOptions): Promise<ExecResult> {
-    const { language, code, timeout = 30_000, background = false } = opts;
+    const { language, code, timeout = 30_000, background = false, stdin } = opts;
     const tmpDir = mkdtempSync(join(tmpdir(), "ctx-mode-"));
 
     try {
@@ -96,7 +98,7 @@ export class PolyglotExecutor {
       // and other project-aware tools work naturally. Non-shell languages
       // run in the temp directory where their script file is written.
       const cwd = this.#projectRoot;
-      const result = await this.#spawn(cmd, cwd, timeout, background);
+      const result = await this.#spawn(cmd, cwd, timeout, background, stdin);
 
       // Skip tmpDir cleanup if process was backgrounded — it may still need files
       if (!result.backgrounded) {
@@ -117,12 +119,24 @@ export class PolyglotExecutor {
   async executeFile(opts: ExecuteFileOptions): Promise<ExecResult> {
     const { path: filePath, language, code, timeout = 30_000 } = opts;
     const absolutePath = resolve(this.#projectRoot, filePath);
+    let fileContent: string;
+    try {
+      fileContent = readFileSync(absolutePath, "utf-8");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        stdout: "",
+        stderr: `Error reading file: ${message}`,
+        exitCode: 1,
+        timedOut: false,
+      };
+    }
     const wrappedCode = this.#wrapWithFileContent(
       absolutePath,
       language,
       code,
     );
-    return this.execute({ language, code: wrappedCode, timeout });
+    return this.execute({ language, code: wrappedCode, timeout, stdin: fileContent });
   }
 
   #writeScript(tmpDir: string, code: string, language: Language): string {
@@ -200,6 +214,7 @@ export class PolyglotExecutor {
     cwd: string,
     timeout: number,
     background = false,
+    stdin?: string,
   ): Promise<ExecResult> {
     return new Promise((res) => {
       // Only .cmd/.bat shims need shell on Windows; real executables don't.
@@ -222,12 +237,18 @@ export class PolyglotExecutor {
 
       const proc = spawn(spawnCmd, spawnArgs, {
         cwd,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [stdin !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
         env: this.#buildSafeEnv(cwd),
         shell: needsShell,
         // On Unix, create a new process group so killTree can kill all children
         detached: !isWin,
       });
+
+      // Pipe stdin content to the child process, then close stdin
+      if (stdin !== undefined) {
+        proc.stdin!.write(stdin, "utf-8");
+        proc.stdin!.end();
+      }
 
       let timedOut = false;
       let resolved = false;
@@ -471,28 +492,28 @@ export class PolyglotExecutor {
     switch (language) {
       case "javascript":
       case "typescript":
-        return `const FILE_CONTENT_PATH = ${escaped};\nconst file_path = FILE_CONTENT_PATH;\nconst FILE_CONTENT = require("fs").readFileSync(FILE_CONTENT_PATH, "utf-8");\n${code}`;
+        return `const FILE_CONTENT_PATH = ${escaped};\nconst file_path = FILE_CONTENT_PATH;\nconst FILE_CONTENT = require("fs").readFileSync(0, "utf-8");\n${code}`;
       case "python":
-        return `FILE_CONTENT_PATH = ${escaped}\nfile_path = FILE_CONTENT_PATH\nwith open(FILE_CONTENT_PATH, "r", encoding="utf-8") as _f:\n    FILE_CONTENT = _f.read()\n${code}`;
+        return `FILE_CONTENT_PATH = ${escaped}\nfile_path = FILE_CONTENT_PATH\nimport sys\nFILE_CONTENT = sys.stdin.read()\n${code}`;
       case "shell": {
         // Single-quote the path to prevent $, backtick, and ! expansion
         const sq = "'" + absolutePath.replace(/'/g, "'\\''") + "'";
-        return `FILE_CONTENT_PATH=${sq}\nfile_path=${sq}\nFILE_CONTENT=$(cat ${sq})\n${code}`;
+        return `FILE_CONTENT_PATH=${sq}\nfile_path=${sq}\nFILE_CONTENT=$(cat)\n${code}`;
       }
       case "ruby":
-        return `FILE_CONTENT_PATH = ${escaped}\nfile_path = FILE_CONTENT_PATH\nFILE_CONTENT = File.read(FILE_CONTENT_PATH, encoding: "utf-8")\n${code}`;
+        return `FILE_CONTENT_PATH = ${escaped}\nfile_path = FILE_CONTENT_PATH\nFILE_CONTENT = $stdin.read\n${code}`;
       case "go":
-        return `package main\n\nimport (\n\t"fmt"\n\t"os"\n)\n\nvar FILE_CONTENT_PATH = ${escaped}\nvar file_path = FILE_CONTENT_PATH\n\nfunc main() {\n\tb, _ := os.ReadFile(FILE_CONTENT_PATH)\n\tFILE_CONTENT := string(b)\n\t_ = FILE_CONTENT\n\t_ = fmt.Sprint()\n${code}\n}\n`;
+        return `package main\n\nimport (\n\t"fmt"\n\t"io"\n\t"os"\n)\n\nvar FILE_CONTENT_PATH = ${escaped}\nvar file_path = FILE_CONTENT_PATH\n\nfunc main() {\n\tb, _ := io.ReadAll(os.Stdin)\n\tFILE_CONTENT := string(b)\n\t_ = FILE_CONTENT\n\t_ = fmt.Sprint()\n${code}\n}\n`;
       case "rust":
-        return `#![allow(unused_variables)]\nuse std::fs;\n\nfn main() {\n    let file_content_path = ${escaped};\n    let file_path = file_content_path;\n    let file_content = fs::read_to_string(file_content_path).unwrap();\n${code}\n}\n`;
+        return `#![allow(unused_variables)]\nuse std::io::{self, Read};\n\nfn main() {\n    let file_content_path = ${escaped};\n    let file_path = file_content_path;\n    let mut file_content = String::new();\n    io::stdin().read_to_string(&mut file_content).unwrap();\n${code}\n}\n`;
       case "php":
-        return `<?php\n$FILE_CONTENT_PATH = ${escaped};\n$file_path = $FILE_CONTENT_PATH;\n$FILE_CONTENT = file_get_contents($FILE_CONTENT_PATH);\n${code}`;
+        return `<?php\n$FILE_CONTENT_PATH = ${escaped};\n$file_path = $FILE_CONTENT_PATH;\n$FILE_CONTENT = file_get_contents("php://stdin");\n${code}`;
       case "perl":
-        return `my $FILE_CONTENT_PATH = ${escaped};\nmy $file_path = $FILE_CONTENT_PATH;\nopen(my $fh, '<:encoding(UTF-8)', $FILE_CONTENT_PATH) or die "Cannot open: $!";\nmy $FILE_CONTENT = do { local $/; <$fh> };\nclose($fh);\n${code}`;
+        return `my $FILE_CONTENT_PATH = ${escaped};\nmy $file_path = $FILE_CONTENT_PATH;\nmy $FILE_CONTENT = do { local $/; <STDIN> };\n${code}`;
       case "r":
-        return `FILE_CONTENT_PATH <- ${escaped}\nfile_path <- FILE_CONTENT_PATH\nFILE_CONTENT <- readLines(FILE_CONTENT_PATH, warn=FALSE, encoding="UTF-8")\nFILE_CONTENT <- paste(FILE_CONTENT, collapse="\\n")\n${code}`;
+        return `FILE_CONTENT_PATH <- ${escaped}\nfile_path <- FILE_CONTENT_PATH\nFILE_CONTENT <- paste(readLines("stdin", warn=FALSE), collapse="\\n")\n${code}`;
       case "elixir":
-        return `file_content_path = ${escaped}\nfile_path = file_content_path\nfile_content = File.read!(file_content_path)\n${code}`;
+        return `file_content_path = ${escaped}\nfile_path = file_content_path\nfile_content = IO.read(:stdio, :all)\n${code}`;
     }
   }
 }

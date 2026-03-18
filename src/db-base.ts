@@ -61,10 +61,15 @@ export function loadDatabase(): typeof DatabaseConstructor {
  * - Dramatically faster writes (no full-page sync on each commit)
  * NORMAL synchronous is safe under WAL and avoids an extra fsync per
  * transaction.
+ *
+ * busy_timeout tells SQLite to retry internally for up to N milliseconds
+ * when it encounters SQLITE_BUSY (write lock contention). This prevents
+ * transient lock conflicts from surfacing as errors to callers.
  */
 export function applyWALPragmas(db: DatabaseInstance): void {
   db.pragma("journal_mode = WAL");
   db.pragma("synchronous = NORMAL");
+  db.pragma("busy_timeout = 2000");
 }
 
 // ─────────────────────────────────────────────────────────

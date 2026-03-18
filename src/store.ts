@@ -147,6 +147,12 @@ export class ContentStore {
   #stmtInsertChunk!: PreparedStatement;
   #stmtInsertChunkTrigram!: PreparedStatement;
   #stmtInsertVocab!: PreparedStatement;
+  #stmtTouchSource!: PreparedStatement;
+
+  // Eviction path (TTL)
+  #stmtEvictStale!: PreparedStatement;
+  #stmtEvictOrphanChunks!: PreparedStatement;
+  #stmtEvictOrphanChunksTrigram!: PreparedStatement;
 
   // Dedup path (delete previous source with same label before re-indexing)
   #stmtDeleteChunksByLabel!: PreparedStatement;
@@ -219,6 +225,14 @@ export class ContentStore {
         word TEXT PRIMARY KEY
       );
     `);
+
+    // Add TTL tracking column for stale source eviction (Issue #26).
+    // Uses ALTER TABLE with try/catch since the table may already exist.
+    try {
+      this.#db.exec("ALTER TABLE sources ADD COLUMN last_accessed INTEGER NOT NULL DEFAULT (unixepoch())");
+    } catch {
+      // Column already exists — safe to ignore
+    }
   }
 
   #prepareStatements(): void {
@@ -239,6 +253,22 @@ export class ContentStore {
       "INSERT OR IGNORE INTO vocabulary (word) VALUES (?)",
     );
 
+    // TTL: touch last_accessed on index/re-index
+    this.#stmtTouchSource = this.#db.prepare(
+      "UPDATE sources SET last_accessed = unixepoch() WHERE label = ?",
+    );
+
+    // TTL eviction
+    this.#stmtEvictStale = this.#db.prepare(
+      "DELETE FROM sources WHERE last_accessed < ?",
+    );
+    this.#stmtEvictOrphanChunks = this.#db.prepare(
+      "DELETE FROM chunks WHERE source_id NOT IN (SELECT id FROM sources)",
+    );
+    this.#stmtEvictOrphanChunksTrigram = this.#db.prepare(
+      "DELETE FROM chunks_trigram WHERE source_id NOT IN (SELECT id FROM sources)",
+    );
+
     // Dedup path: delete previous source with same label before re-indexing
     // Prevents stale outputs from accumulating in iterative workflows (build-fix-build)
     this.#stmtDeleteChunksByLabel = this.#db.prepare(
@@ -252,13 +282,21 @@ export class ContentStore {
     );
 
     // Search path (hot)
+    // Adaptive BM25 weights: code chunks favor content match (1.0, 2.0),
+    // prose chunks favor title match (2.0, 1.0). This improves relevance
+    // for code-heavy sources where identifiers in content matter more than
+    // section headings. Threshold heuristic: a chunk is "code" if it contains
+    // a fenced code block (detected during chunking).
     this.#stmtSearchPorter = this.#db.prepare(`
       SELECT
         chunks.title,
         chunks.content,
         chunks.content_type,
         sources.label,
-        bm25(chunks, 2.0, 1.0) AS rank,
+        CASE WHEN chunks.content_type = 'code'
+          THEN bm25(chunks, 1.0, 2.0)
+          ELSE bm25(chunks, 2.0, 1.0)
+        END AS rank,
         highlight(chunks, 1, char(2), char(3)) AS highlighted
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
@@ -272,7 +310,10 @@ export class ContentStore {
         chunks.content,
         chunks.content_type,
         sources.label,
-        bm25(chunks, 2.0, 1.0) AS rank,
+        CASE WHEN chunks.content_type = 'code'
+          THEN bm25(chunks, 1.0, 2.0)
+          ELSE bm25(chunks, 2.0, 1.0)
+        END AS rank,
         highlight(chunks, 1, char(2), char(3)) AS highlighted
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
@@ -286,7 +327,10 @@ export class ContentStore {
         chunks_trigram.content,
         chunks_trigram.content_type,
         sources.label,
-        bm25(chunks_trigram, 2.0, 1.0) AS rank,
+        CASE WHEN chunks_trigram.content_type = 'code'
+          THEN bm25(chunks_trigram, 1.0, 2.0)
+          ELSE bm25(chunks_trigram, 2.0, 1.0)
+        END AS rank,
         highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
@@ -300,7 +344,10 @@ export class ContentStore {
         chunks_trigram.content,
         chunks_trigram.content_type,
         sources.label,
-        bm25(chunks_trigram, 2.0, 1.0) AS rank,
+        CASE WHEN chunks_trigram.content_type = 'code'
+          THEN bm25(chunks_trigram, 1.0, 2.0)
+          ELSE bm25(chunks_trigram, 2.0, 1.0)
+        END AS rank,
         highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
@@ -456,6 +503,9 @@ export class ContentStore {
 
     const sourceId = transaction();
     if (text) this.#extractAndStoreVocabulary(text);
+
+    // Update last_accessed timestamp for TTL tracking (Issue #26)
+    this.#stmtTouchSource.run(label);
 
     return {
       sourceId,
@@ -725,6 +775,23 @@ export class ContentStore {
   }
 
   // ── Cleanup ──
+
+  /**
+   * Remove sources not accessed in the last N minutes.
+   * Also cleans up orphaned chunks from FTS5 tables.
+   * Returns the number of evicted sources.
+   */
+  evictStaleSources(ttlMinutes: number = 60): number {
+    const cutoff = Math.floor(Date.now() / 1000) - (ttlMinutes * 60);
+    const result = this.#stmtEvictStale.run(cutoff);
+    const evicted = result.changes;
+    if (evicted > 0) {
+      // Clean up orphaned chunks (no foreign key cascade for FTS5 virtual tables)
+      this.#stmtEvictOrphanChunks.run();
+      this.#stmtEvictOrphanChunksTrigram.run();
+    }
+    return evicted;
+  }
 
   close(): void {
     this.#db.close();
