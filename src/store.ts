@@ -282,13 +282,21 @@ export class ContentStore {
     );
 
     // Search path (hot)
+    // Adaptive BM25 weights: code chunks favor content match (1.0, 2.0),
+    // prose chunks favor title match (2.0, 1.0). This improves relevance
+    // for code-heavy sources where identifiers in content matter more than
+    // section headings. Threshold heuristic: a chunk is "code" if it contains
+    // a fenced code block (detected during chunking).
     this.#stmtSearchPorter = this.#db.prepare(`
       SELECT
         chunks.title,
         chunks.content,
         chunks.content_type,
         sources.label,
-        bm25(chunks, 2.0, 1.0) AS rank,
+        CASE WHEN chunks.content_type = 'code'
+          THEN bm25(chunks, 1.0, 2.0)
+          ELSE bm25(chunks, 2.0, 1.0)
+        END AS rank,
         highlight(chunks, 1, char(2), char(3)) AS highlighted
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
@@ -302,7 +310,10 @@ export class ContentStore {
         chunks.content,
         chunks.content_type,
         sources.label,
-        bm25(chunks, 2.0, 1.0) AS rank,
+        CASE WHEN chunks.content_type = 'code'
+          THEN bm25(chunks, 1.0, 2.0)
+          ELSE bm25(chunks, 2.0, 1.0)
+        END AS rank,
         highlight(chunks, 1, char(2), char(3)) AS highlighted
       FROM chunks
       JOIN sources ON sources.id = chunks.source_id
@@ -316,7 +327,10 @@ export class ContentStore {
         chunks_trigram.content,
         chunks_trigram.content_type,
         sources.label,
-        bm25(chunks_trigram, 2.0, 1.0) AS rank,
+        CASE WHEN chunks_trigram.content_type = 'code'
+          THEN bm25(chunks_trigram, 1.0, 2.0)
+          ELSE bm25(chunks_trigram, 2.0, 1.0)
+        END AS rank,
         highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
@@ -330,7 +344,10 @@ export class ContentStore {
         chunks_trigram.content,
         chunks_trigram.content_type,
         sources.label,
-        bm25(chunks_trigram, 2.0, 1.0) AS rank,
+        CASE WHEN chunks_trigram.content_type = 'code'
+          THEN bm25(chunks_trigram, 1.0, 2.0)
+          ELSE bm25(chunks_trigram, 2.0, 1.0)
+        END AS rank,
         highlight(chunks_trigram, 1, char(2), char(3)) AS highlighted
       FROM chunks_trigram
       JOIN sources ON sources.id = chunks_trigram.source_id
