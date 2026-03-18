@@ -98,7 +98,11 @@ function maybeIndexSessionEvents(store: ContentStore): void {
  * Auto-indexes session events on first access.
  */
 function getStore(): ContentStore {
-  if (!_store) _store = new ContentStore();
+  if (!_store) {
+    _store = new ContentStore();
+    // Evict stale sources from long-running sessions (Issue #26)
+    _store.evictStaleSources(60);
+  }
   maybeIndexSessionEvents(_store);
   return _store;
 }

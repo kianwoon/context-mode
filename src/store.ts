@@ -147,6 +147,12 @@ export class ContentStore {
   #stmtInsertChunk!: PreparedStatement;
   #stmtInsertChunkTrigram!: PreparedStatement;
   #stmtInsertVocab!: PreparedStatement;
+  #stmtTouchSource!: PreparedStatement;
+
+  // Eviction path (TTL)
+  #stmtEvictStale!: PreparedStatement;
+  #stmtEvictOrphanChunks!: PreparedStatement;
+  #stmtEvictOrphanChunksTrigram!: PreparedStatement;
 
   // Dedup path (delete previous source with same label before re-indexing)
   #stmtDeleteChunksByLabel!: PreparedStatement;
@@ -219,6 +225,14 @@ export class ContentStore {
         word TEXT PRIMARY KEY
       );
     `);
+
+    // Add TTL tracking column for stale source eviction (Issue #26).
+    // Uses ALTER TABLE with try/catch since the table may already exist.
+    try {
+      this.#db.exec("ALTER TABLE sources ADD COLUMN last_accessed INTEGER NOT NULL DEFAULT (unixepoch())");
+    } catch {
+      // Column already exists — safe to ignore
+    }
   }
 
   #prepareStatements(): void {
@@ -237,6 +251,22 @@ export class ContentStore {
     );
     this.#stmtInsertVocab = this.#db.prepare(
       "INSERT OR IGNORE INTO vocabulary (word) VALUES (?)",
+    );
+
+    // TTL: touch last_accessed on index/re-index
+    this.#stmtTouchSource = this.#db.prepare(
+      "UPDATE sources SET last_accessed = unixepoch() WHERE label = ?",
+    );
+
+    // TTL eviction
+    this.#stmtEvictStale = this.#db.prepare(
+      "DELETE FROM sources WHERE last_accessed < ?",
+    );
+    this.#stmtEvictOrphanChunks = this.#db.prepare(
+      "DELETE FROM chunks WHERE source_id NOT IN (SELECT id FROM sources)",
+    );
+    this.#stmtEvictOrphanChunksTrigram = this.#db.prepare(
+      "DELETE FROM chunks_trigram WHERE source_id NOT IN (SELECT id FROM sources)",
     );
 
     // Dedup path: delete previous source with same label before re-indexing
@@ -456,6 +486,9 @@ export class ContentStore {
 
     const sourceId = transaction();
     if (text) this.#extractAndStoreVocabulary(text);
+
+    // Update last_accessed timestamp for TTL tracking (Issue #26)
+    this.#stmtTouchSource.run(label);
 
     return {
       sourceId,
@@ -725,6 +758,23 @@ export class ContentStore {
   }
 
   // ── Cleanup ──
+
+  /**
+   * Remove sources not accessed in the last N minutes.
+   * Also cleans up orphaned chunks from FTS5 tables.
+   * Returns the number of evicted sources.
+   */
+  evictStaleSources(ttlMinutes: number = 60): number {
+    const cutoff = Math.floor(Date.now() / 1000) - (ttlMinutes * 60);
+    const result = this.#stmtEvictStale.run(cutoff);
+    const evicted = result.changes;
+    if (evicted > 0) {
+      // Clean up orphaned chunks (no foreign key cascade for FTS5 virtual tables)
+      this.#stmtEvictOrphanChunks.run();
+      this.#stmtEvictOrphanChunksTrigram.run();
+    }
+    return evicted;
+  }
 
   close(): void {
     this.#db.close();

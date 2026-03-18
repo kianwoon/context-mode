@@ -5,6 +5,7 @@
  * Provide all commands to run and all queries to search — everything
  * happens in one round trip.
  */
+import { createHash } from "node:crypto";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PolyglotExecutor } from "../executor.js";
@@ -13,6 +14,11 @@ import type { ToolResult } from "../server/session-stats.js";
 import { checkDenyPolicy } from "../server/security-wrapper.js";
 import { extractSnippet } from "../server/snippet-extractor.js";
 import { errorMessage } from "./tool-utils.js";
+
+/** Hash content to 16-char hex for deduplication. */
+function hashContent(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
 
 export interface ToolDeps {
   trackResponse: (toolName: string, response: ToolResult) => ToolResult;
@@ -113,7 +119,23 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
           }
         }
 
-        const stdout = perCommandOutputs.join("\n");
+        // Cross-command deduplication: skip indexing commands that produce
+        // identical stdout to a previously indexed command in this batch.
+        const seenHashes = new Set<string>();
+        const uniqueOutputs: string[] = [];
+        let deduplicatedCount = 0;
+
+        for (const output of perCommandOutputs) {
+          const h = hashContent(output);
+          if (seenHashes.has(h)) {
+            deduplicatedCount++;
+          } else {
+            seenHashes.add(h);
+            uniqueOutputs.push(output);
+          }
+        }
+
+        const stdout = uniqueOutputs.join("\n");
         const totalBytes = Buffer.byteLength(stdout);
         const totalLines = stdout.split("\n").length;
 
@@ -132,7 +154,7 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
         // Track indexed bytes (raw data that stays in sandbox)
         trackIndexed(totalBytes);
 
-        // Index into knowledge base — markdown heading chunking splits by # labels
+        // Index only deduplicated output into knowledge base
         const store = getStore();
         const source = `batch:${commands
           .map((c) => c.label)
@@ -201,7 +223,10 @@ export function registerBatchExecuteTool(server: McpServer, deps: ToolDeps): voi
           : [];
 
         const output = [
-          `Executed ${commands.length} commands (${totalLines} lines, ${(totalBytes / 1024).toFixed(1)}KB). ` +
+          `Executed ${commands.length} commands (${totalLines} lines, ${(totalBytes / 1024).toFixed(1)}KB)` +
+            (deduplicatedCount > 0
+              ? ` (${deduplicatedCount} deduplicated, ${uniqueOutputs.length} indexed). `
+              : ". ") +
             `Indexed ${indexed.totalChunks} sections. Searched ${queries.length} queries.`,
           "",
           ...inventory,

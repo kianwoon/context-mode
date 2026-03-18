@@ -36,10 +36,13 @@ function defaultIsParentAlive(): boolean {
 /**
  * Start the lifecycle guard. Returns a cleanup function.
  * Skipped automatically when stdin is a TTY (e.g. OpenCode ts-plugin).
+ *
+ * When the parent process communicates via stdio IPC (e.g. Claude Code),
+ * `process.on('disconnect')` fires instantly on parent death — no polling
+ * needed. Otherwise, falls back to periodic ppid checking.
  */
 export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
-  const interval = opts.checkIntervalMs ?? 30_000;
-  const check = opts.isParentAlive ?? defaultIsParentAlive;
+  const hasIpc = typeof process.send === "function";
   let stopped = false;
 
   const shutdown = () => {
@@ -48,28 +51,41 @@ export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
     opts.onShutdown();
   };
 
-  // P0: Periodic parent liveness check
-  const timer = setInterval(() => {
-    if (!check()) shutdown();
-  }, interval);
-  timer.unref();
+  // P0: OS signals — terminal close, kill, ctrl+c (always registered)
+  const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
+  if (process.platform !== "win32") signals.push("SIGHUP");
+  for (const sig of signals) process.on(sig, shutdown);
 
-  // P0: Stdin close — parent pipe broken
-  // Must resume stdin to receive close/end events (Node starts paused)
+  // P0: Stdin close — parent pipe broken (always registered as secondary signal)
   const onStdinClose = () => shutdown();
   process.stdin.resume();
   process.stdin.on("end", onStdinClose);
   process.stdin.on("close", onStdinClose);
   process.stdin.on("error", onStdinClose);
 
-  // P0: OS signals — terminal close, kill, ctrl+c
-  const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
-  if (process.platform !== "win32") signals.push("SIGHUP");
-  for (const sig of signals) process.on(sig, shutdown);
+  // P0: Parent liveness detection — IPC event or polling fallback
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  if (hasIpc) {
+    // Instant notification via IPC when parent disconnects
+    process.on("disconnect", shutdown);
+  } else {
+    // Polling fallback: periodic ppid check
+    const interval = opts.checkIntervalMs ?? 30_000;
+    const check = opts.isParentAlive ?? defaultIsParentAlive;
+    timer = setInterval(() => {
+      if (!check()) shutdown();
+    }, interval);
+    timer.unref();
+  }
 
   return () => {
     stopped = true;
-    clearInterval(timer);
+    if (hasIpc) {
+      process.removeListener("disconnect", shutdown);
+    } else {
+      clearInterval(timer!);
+    }
     process.stdin.removeListener("end", onStdinClose);
     process.stdin.removeListener("close", onStdinClose);
     process.stdin.removeListener("error", onStdinClose);
