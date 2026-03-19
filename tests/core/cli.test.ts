@@ -6,10 +6,12 @@
  *   - cli-hook-path.test.ts (forward-slash hook paths)
  *   - package-exports.test.ts (public API surface)
  */
-import { describe, it, test, expect } from "vitest";
+import { describe, it, test, expect, beforeEach, afterEach } from "vitest";
 import { strict as assert } from "node:assert";
-import { readFileSync, existsSync, accessSync, constants } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync, accessSync, constants, mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { toUnixPath } from "../../src/cli.js";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -192,6 +194,127 @@ describe("CLI Hook Path Tests", () => {
       !command.includes("\\"),
       `SessionStart command must not contain backslashes: ${command}`,
     );
+  });
+});
+
+// ── ABI-aware native binary caching (#148) ────────────────────────────
+
+describe("ABI-aware native binary caching (#148)", () => {
+  let tempDir: string;
+  let releaseDir: string;
+  let binaryPath: string;
+
+  const currentAbi = process.versions.modules; // e.g. "115"
+
+  function abiCachePath(abi: string = currentAbi): string {
+    return join(releaseDir, `better_sqlite3.abi${abi}.node`);
+  }
+
+  function createFakeBinary(path: string, content: string = "fake-binary"): void {
+    writeFileSync(path, content);
+  }
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "abi-test-"));
+    releaseDir = join(tempDir, "node_modules", "better-sqlite3", "build", "Release");
+    binaryPath = join(releaseDir, "better_sqlite3.node");
+    mkdirSync(releaseDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  test("cache hit: copies cached ABI binary to active path", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    // Set up: cached binary for current ABI exists, active binary has different content
+    createFakeBinary(abiCachePath(), "abi-cached-binary");
+    createFakeBinary(binaryPath, "old-binary");
+
+    ensureNativeCompat(tempDir);
+
+    // Active binary should now match the cached version
+    expect(readFileSync(binaryPath, "utf-8")).toBe("abi-cached-binary");
+  });
+
+  test("cache miss + compatible: caches current binary for future sessions", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    // Set up: active binary exists but no ABI cache yet
+    // We can't actually load this fake binary, so we test with skipProbe option
+    createFakeBinary(binaryPath, "compatible-binary");
+
+    ensureNativeCompat(tempDir, { skipProbe: true });
+
+    // Should have created an ABI cache file
+    expect(existsSync(abiCachePath())).toBe(true);
+    expect(readFileSync(abiCachePath(), "utf-8")).toBe("compatible-binary");
+  });
+
+  test("missing release directory: does not throw", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    // Remove the release dir
+    rmSync(releaseDir, { recursive: true });
+
+    expect(() => ensureNativeCompat(tempDir)).not.toThrow();
+  });
+
+  test("missing binary + no cache: does not throw", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    // Release dir exists but no binary
+    expect(() => ensureNativeCompat(tempDir)).not.toThrow();
+  });
+
+  test("cache hit does not trigger rebuild", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    let rebuildCalled = false;
+    createFakeBinary(abiCachePath(), "cached");
+    createFakeBinary(binaryPath, "old");
+
+    ensureNativeCompat(tempDir, {
+      rebuild: () => { rebuildCalled = true; },
+    });
+
+    expect(rebuildCalled).toBe(false);
+    expect(readFileSync(binaryPath, "utf-8")).toBe("cached");
+  });
+
+  test("cross-platform: ABI cache filename uses correct format", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    createFakeBinary(binaryPath, "binary");
+    ensureNativeCompat(tempDir, { skipProbe: true });
+
+    // Cache file should be named better_sqlite3.abi{N}.node
+    const files = readdirSync(releaseDir);
+    const cacheFiles = files.filter(f => f.match(/^better_sqlite3\.abi\d+\.node$/));
+    expect(cacheFiles).toHaveLength(1);
+    expect(cacheFiles[0]).toBe(`better_sqlite3.abi${currentAbi}.node`);
+  });
+
+  test("multiple ABI caches coexist without interference", async () => {
+    const { ensureNativeCompat } = await import("../../native-abi.mjs");
+
+    // Simulate: two ABI caches already exist + active binary
+    createFakeBinary(join(releaseDir, "better_sqlite3.abi115.node"), "node20-binary");
+    createFakeBinary(join(releaseDir, "better_sqlite3.abi137.node"), "node24-binary");
+    createFakeBinary(binaryPath, "old");
+
+    ensureNativeCompat(tempDir);
+
+    // Should copy the correct ABI's cached binary
+    const expected = currentAbi === "115" ? "node20-binary" : currentAbi === "137" ? "node24-binary" : undefined;
+    if (expected) {
+      expect(readFileSync(binaryPath, "utf-8")).toBe(expected);
+    }
+
+    // Both cache files should still exist
+    expect(existsSync(join(releaseDir, "better_sqlite3.abi115.node"))).toBe(true);
+    expect(existsSync(join(releaseDir, "better_sqlite3.abi137.node"))).toBe(true);
   });
 });
 

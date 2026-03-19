@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, readdirSync, copyFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { ensureNativeCompat } from "./native-abi.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const originalCwd = process.cwd();
@@ -127,41 +128,7 @@ for (const pkg of ["better-sqlite3", "turndown", "turndown-plugin-gfm", "@mixmar
 // Ensure better-sqlite3 native binary matches current Node.js ABI (#148)
 // Users with mise/asdf may run concurrent sessions with different Node versions.
 // Each ABI needs its own compiled binary — cache them side-by-side.
-try {
-  const abi = process.versions.modules;
-  const nativeDir = resolve(__dirname, "node_modules", "better-sqlite3", "build", "Release");
-  const binaryPath = resolve(nativeDir, "better_sqlite3.node");
-  const abiCachePath = resolve(nativeDir, `better_sqlite3.abi${abi}.node`);
-
-  if (existsSync(abiCachePath)) {
-    // Fast path: cached binary for this ABI exists — swap it in
-    copyFileSync(abiCachePath, binaryPath);
-  } else if (existsSync(binaryPath)) {
-    // Probe: try loading current binary to check ABI compatibility
-    try {
-      const { createRequire } = await import("node:module");
-      const req = createRequire(import.meta.url);
-      req("better-sqlite3");
-      // Compatible — cache for future sessions with this ABI
-      copyFileSync(binaryPath, abiCachePath);
-    } catch (probeErr) {
-      if (probeErr?.message?.includes("NODE_MODULE_VERSION")) {
-        // ABI mismatch — rebuild for current Node version
-        execSync("npm rebuild better-sqlite3", {
-          cwd: __dirname,
-          stdio: "pipe",
-          timeout: 60000,
-        });
-        // Cache the rebuilt binary
-        if (existsSync(binaryPath)) {
-          copyFileSync(binaryPath, abiCachePath);
-        }
-      }
-    }
-  }
-} catch {
-  /* best effort — server will report the error on first DB access */
-}
+ensureNativeCompat(__dirname);
 
 // Bundle exists (CI-built) — start instantly
 if (existsSync(resolve(__dirname, "server.bundle.mjs"))) {

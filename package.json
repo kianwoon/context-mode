@@ -54,6 +54,7 @@
     ".mcp.json",
     "openclaw.plugin.json",
     "start.mjs",
+    "native-abi.mjs",
     "README.md",
     "LICENSE"
   ],
