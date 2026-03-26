@@ -213,6 +213,7 @@ function findMinSpan(positionLists: number[][]): number {
 export class ContentStore {
   #db: DatabaseInstance;
   #dbPath: string;
+  readonly #TTL_MINUTES = 60;
 
   // ── Cached Prepared Statements ──
   // Prepared once at construction, reused on every call to avoid
@@ -494,6 +495,9 @@ export class ContentStore {
     if (!content && !path) {
       throw new Error("Either content or path must be provided");
     }
+
+    // Evict stale entries before inserting new content
+    try { this.evictStaleEntries(); } catch { /* non-critical */ }
 
     const text = content ?? readFileSync(path!, "utf-8");
     const label = source ?? path ?? "untitled";
@@ -943,6 +947,37 @@ export class ContentStore {
   }
 
   // ── Cleanup ──
+
+  /**
+   * Evict index entries older than #TTL_MINUTES from both FTS5 tables
+   * and delete orphaned sources. Runs automatically at the start of index().
+   */
+  evictStaleEntries(): void {
+    const cutoff = `-${this.#TTL_MINUTES} minutes`;
+    const deleteChunks = this.#db.prepare(
+      `DELETE FROM chunks WHERE source_id IN (
+        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
+      )`,
+    );
+    const deleteChunksTrigram = this.#db.prepare(
+      `DELETE FROM chunks_trigram WHERE source_id IN (
+        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
+      )`,
+    );
+    const deleteOrphanSources = this.#db.prepare(
+      `DELETE FROM sources WHERE id NOT IN (
+        SELECT DISTINCT source_id FROM chunks
+      ) AND id NOT IN (
+        SELECT DISTINCT source_id FROM chunks_trigram
+      )`,
+    );
+    const evict = this.#db.transaction(() => {
+      deleteChunks.run(cutoff);
+      deleteChunksTrigram.run(cutoff);
+      deleteOrphanSources.run();
+    });
+    evict();
+  }
 
   /**
    * Delete sources (and their chunks) older than maxAgeDays.

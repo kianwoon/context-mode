@@ -46,6 +46,9 @@ export class PolyglotExecutor {
   #projectRoot: string;
   #runtimes: RuntimeMap;
 
+  /** Maximum number of concurrent background processes (FIFO eviction). */
+  static readonly #MAX_BACKGROUND = 10;
+
   /** PIDs of backgrounded processes — killed on cleanup to prevent zombies. */
   #backgroundedPids = new Set<number>();
 
@@ -233,7 +236,17 @@ export class PolyglotExecutor {
         if (background) {
           // Background mode: detach process, return partial output, keep running
           resolved = true;
-          if (proc.pid) this.#backgroundedPids.add(proc.pid);
+          if (proc.pid) {
+            // FIFO eviction: if at capacity, kill the oldest background process
+            if (this.#backgroundedPids.size >= PolyglotExecutor.#MAX_BACKGROUND) {
+              const oldest = this.#backgroundedPids.values().next().value;
+              if (oldest != null) {
+                try { process.kill(oldest, "SIGTERM"); } catch {}
+                this.#backgroundedPids.delete(oldest);
+              }
+            }
+            this.#backgroundedPids.add(proc.pid);
+          }
           proc.unref();
           proc.stdout!.destroy();
           proc.stderr!.destroy();

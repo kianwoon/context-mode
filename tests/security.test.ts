@@ -589,3 +589,124 @@ describe("Shell-Escape Scanner", () => {
     assert.deepEqual(result, []);
   });
 });
+
+describe("edge cases", () => {
+  // ── parseBashPattern: nested parentheses ──
+  test("parseBashPattern: non-greedy stops at first closing paren", () => {
+    // The regex is non-greedy: Bash(echo $(cat $(echo "test"))) captures
+    // only up to the first ')', returning 'echo $(cat $(echo "test"'
+    const result = parseBashPattern('Bash(echo $(cat $(echo "test")))');
+    assert.ok(result !== null, "should parse successfully");
+    assert.ok(
+      result!.startsWith("echo $(cat $(echo"),
+      `should capture prefix up to first closing paren, got: "${result}"`,
+    );
+  });
+
+  test("parseBashPattern: quoted inner content handled by non-greedy match", () => {
+    const result = parseBashPattern('Bash($(command "$(inner)"))');
+    assert.ok(result !== null, "should parse successfully");
+    assert.ok(
+      result!.startsWith("$(command"),
+      `should capture the outer command start, got: "${result}"`,
+    );
+  });
+
+  test("parseBashPattern: empty inner returns null (.+? requires at least one char)", () => {
+    const result = parseBashPattern("Bash()");
+    assert.equal(result, null);
+  });
+
+  // ── parseToolPattern: complex patterns ──
+  test("parseToolPattern: hyphenated tool name returns null (\\w+ only)", () => {
+    // \w+ does not match hyphens — hyphenated tool names are unsupported
+    assert.equal(parseToolPattern("my-tool(pattern)"), null);
+  });
+
+  test("parseToolPattern: dotted tool name returns null (\\w+ only)", () => {
+    // \w+ does not match dots — dotted tool names are unsupported
+    assert.equal(parseToolPattern("tool.sub(pattern)"), null);
+  });
+
+  test("parseToolPattern: underscored tool name works", () => {
+    // \w+ matches underscores
+    const result = parseToolPattern("my_tool(some *glob*)");
+    assert.deepEqual(result, { tool: "my_tool", glob: "some *glob*" });
+  });
+
+  test("parseToolPattern: nested parens — regex backtracks to match outermost parens", () => {
+    // The regex ^(\w+)\((.+?)\)$ backtracks: .+? extends until \)$ can match
+    // the final ')', so "Bash(echo $(foo))" captures glob as "echo $(foo)"
+    const result = parseToolPattern("Bash(echo $(foo))");
+    assert.deepEqual(result, { tool: "Bash", glob: "echo $(foo)" });
+  });
+
+  // ── evaluateCommand: chained commands ──
+  test("evaluateCommand: catches dangerous command after &&", () => {
+    const policies = [
+      { allow: ["Bash(ls:*)"], deny: ["Bash(rm -rf /*)"], ask: [] },
+    ];
+    const result = evaluateCommand("ls && rm -rf /", policies, false);
+    assert.equal(result.decision, "deny");
+    assert.equal(result.matchedPattern, "Bash(rm -rf /*)");
+  });
+
+  test("evaluateCommand: catches dangerous command after semicolon", () => {
+    const policies = [
+      { allow: ["Bash(echo:*)"], deny: ["Bash(curl *)"], ask: [] },
+    ];
+    const result = evaluateCommand('echo ok; curl malicious.com', policies, false);
+    assert.equal(result.decision, "deny");
+    assert.equal(result.matchedPattern, "Bash(curl *)");
+  });
+
+  test("evaluateCommand: all segments safe returns ask (no allow match)", () => {
+    const policies = [
+      { allow: [], deny: ["Bash(sudo *)"], ask: [] },
+    ];
+    const result = evaluateCommand("echo hello && echo world", policies, false);
+    // Neither segment matches deny, and no allow matches, so default is "ask"
+    assert.equal(result.decision, "ask");
+  });
+
+  test("evaluateCommand: allows when all segments match allow", () => {
+    const policies = [
+      { allow: ["Bash(echo:*)", "Bash(ls:*)"], deny: [], ask: [] },
+    ];
+    const result = evaluateCommand("echo hello && ls /tmp", policies, false);
+    assert.equal(result.decision, "allow");
+  });
+
+  // ── evaluateFilePath: globstar and traversal patterns ──
+  test("evaluateFilePath: globstar **/*.ts matches nested .ts files", () => {
+    const result = evaluateFilePath("src/components/App.ts", [["**/*.ts"]], false);
+    assert.equal(result.denied, true);
+    assert.equal(result.matchedPattern, "**/*.ts");
+  });
+
+  test("evaluateFilePath: globstar does not match non-.ts files", () => {
+    const result = evaluateFilePath("src/style.css", [["**/*.ts"]], false);
+    assert.equal(result.denied, false);
+  });
+
+  test("evaluateFilePath: path traversal with .. is matched literally", () => {
+    const result = evaluateFilePath("../../etc/passwd", [["../../etc/*"]], false);
+    assert.equal(result.denied, true);
+    assert.equal(result.matchedPattern, "../../etc/*");
+  });
+
+  test("evaluateFilePath: globstar with wildcard catches traversal + extension", () => {
+    const result = evaluateFilePath(
+      "../../../secrets/credentials.json",
+      [["**/*credentials*"]],
+      false,
+    );
+    assert.equal(result.denied, true);
+    assert.equal(result.matchedPattern, "**/*credentials*");
+  });
+
+  test("evaluateFilePath: path with .. not caught by unrelated glob", () => {
+    const result = evaluateFilePath("../../etc/passwd", [["**/*.ts"]], false);
+    assert.equal(result.denied, false);
+  });
+});

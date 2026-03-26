@@ -311,10 +311,15 @@ function stripMarkers(highlighted: string): string {
 export function extractSnippet(
   content: string,
   query: string,
-  maxLen = 1500,
+  maxLen?: number,
   highlighted?: string,
+  contentType?: "code" | "prose" | "table",
 ): string {
-  if (content.length <= maxLen) return content;
+  // Adaptive snippet window: code needs more context, tables more than prose.
+  // When maxLen is explicitly provided, use the larger of maxLen and the adaptive value.
+  const adaptiveLen = contentType === "code" ? 3000 : contentType === "table" ? 2000 : 1500;
+  const effectiveMaxLen = maxLen != null ? Math.max(maxLen, adaptiveLen) : adaptiveLen;
+  if (content.length <= effectiveMaxLen) return content;
 
   // Derive match positions from FTS5 highlight markers when available
   const positions: number[] = [];
@@ -344,7 +349,7 @@ export function extractSnippet(
 
   // No matches at all — return prefix
   if (positions.length === 0) {
-    return content.slice(0, maxLen) + "\n…";
+    return content.slice(0, effectiveMaxLen) + "\n…";
   }
 
   // Sort positions, merge overlapping windows
@@ -362,12 +367,12 @@ export function extractSnippet(
     }
   }
 
-  // Collect windows until maxLen
+  // Collect windows until effectiveMaxLen
   const parts: string[] = [];
   let total = 0;
   for (const [start, end] of windows) {
-    if (total >= maxLen) break;
-    const part = content.slice(start, Math.min(end, start + (maxLen - total)));
+    if (total >= effectiveMaxLen) break;
+    const part = content.slice(start, Math.min(end, start + (effectiveMaxLen - total)));
     parts.push(
       (start > 0 ? "…" : "") + part + (end < content.length ? "…" : ""),
     );
@@ -1046,7 +1051,7 @@ server.registerTool(
           .map((r, i) => {
             const header = `--- [${r.source}] ---`;
             const heading = `### ${r.title}`;
-            const snippet = extractSnippet(r.content, q, 1500, r.highlighted);
+            const snippet = extractSnippet(r.content, q, undefined, r.highlighted, r.contentType);
             return `${header}\n${heading}\n\n${snippet}`;
           })
           .join("\n\n");
@@ -1490,7 +1495,8 @@ server.registerTool(
         if (results.length > 0) {
           for (const r of results) {
             // Use larger snippet (3KB) for batch_execute to reduce tiny-fragment issue (Issue #61)
-            const snippet = extractSnippet(r.content, query, 3000, r.highlighted);
+            // Use larger snippet for batch_execute to reduce tiny-fragment issue (Issue #61)
+            const snippet = extractSnippet(r.content, query, undefined, r.highlighted, r.contentType);
             const sourceTag = crossSource ? ` _(source: ${r.source})_` : "";
             queryResults.push(`### ${r.title}${sourceTag}`);
             queryResults.push(snippet);

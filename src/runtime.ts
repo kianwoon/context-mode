@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 
 export type Language =
@@ -36,6 +37,8 @@ export interface RuntimeMap {
 }
 
 const isWindows = process.platform === "win32";
+
+let _runtimeCache: { pathHash: string; runtimes: RuntimeMap } | null = null;
 
 function commandExists(cmd: string): boolean {
   try {
@@ -94,9 +97,18 @@ function getVersion(cmd: string): string {
 }
 
 export function detectRuntimes(): RuntimeMap {
+  const pathHash = createHash("sha256")
+    .update(process.env.PATH || "")
+    .digest("hex")
+    .slice(0, 16);
+
+  if (_runtimeCache && _runtimeCache.pathHash === pathHash) {
+    return { ..._runtimeCache.runtimes };
+  }
+
   const hasBun = commandExists("bun");
 
-  return {
+  const runtimes: RuntimeMap = {
     javascript: hasBun ? "bun" : "node",
     typescript: hasBun
       ? "bun"
@@ -125,6 +137,14 @@ export function detectRuntimes(): RuntimeMap {
         : null,
     elixir: commandExists("elixir") ? "elixir" : null,
   };
+
+  _runtimeCache = { pathHash, runtimes };
+
+  return { ...runtimes };
+}
+
+export function clearRuntimeCache(): void {
+  _runtimeCache = null;
 }
 
 export function hasBunRuntime(): boolean {

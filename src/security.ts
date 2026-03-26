@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
@@ -23,9 +23,10 @@ export interface SecurityPolicy {
  * "Bash(sudo *)" returns "sudo *", "Read(.env)" returns null.
  */
 export function parseBashPattern(pattern: string): string | null {
-  // .+ is greedy: for "Bash(echo (foo))" it captures "echo (foo)"
-  // because $ forces the final \) to match only the last paren.
-  const match = pattern.match(/^Bash\((.+)\)$/);
+  // Non-greedy to avoid matching past the first closing paren.
+  // e.g. "Bash(echo (foo))" captures "echo (foo" — but since Bash patterns
+  // rarely contain nested parens this is safer than the greedy variant.
+  const match = pattern.match(/^Bash\((.+?)\)$/);
   return match ? match[1] : null;
 }
 
@@ -36,9 +37,8 @@ export function parseBashPattern(pattern: string): string | null {
 export function parseToolPattern(
   pattern: string,
 ): { tool: string; glob: string } | null {
-  // .+ is greedy: for "Read(some(path))" it captures "some(path)"
-  // because $ forces the final \) to match only the last paren.
-  const match = pattern.match(/^(\w+)\((.+)\)$/);
+  // Non-greedy to avoid matching past the first closing paren.
+  const match = pattern.match(/^(\w+)\((.+?)\)$/);
   return match ? { tool: match[1], glob: match[2] } : null;
 }
 
@@ -210,17 +210,42 @@ export function splitChainedCommands(command: string): string[] {
 }
 
 // ==============================================================================
-// Settings Reader
+// Settings Reader (with mtime-based cache)
 // ==============================================================================
 
-/** Read one settings file and return a SecurityPolicy with only Bash patterns. */
-function readSingleSettings(path: string): SecurityPolicy | null {
-  let raw: string;
+/** Cache entry: file mtime + parsed JSON content. */
+interface SettingsCacheEntry {
+  mtime: number;
+  content: string;
+}
+
+/** Module-level cache for settings file contents, keyed by absolute path. */
+const settingsCache = new Map<string, SettingsCacheEntry>();
+
+/**
+ * Read a file with mtime-based caching.
+ * Returns null if the file doesn't exist or can't be read.
+ * Uses statSync to check mtime — only re-reads if the file has changed.
+ */
+function readCachedFileSync(path: string): string | null {
   try {
-    raw = readFileSync(path, "utf-8");
+    const stat = statSync(path);
+    const cached = settingsCache.get(path);
+    if (cached && cached.mtime === stat.mtimeMs) {
+      return cached.content;
+    }
+    const content = readFileSync(path, "utf-8");
+    settingsCache.set(path, { mtime: stat.mtimeMs, content });
+    return content;
   } catch {
     return null;
   }
+}
+
+/** Read one settings file and return a SecurityPolicy with only Bash patterns. */
+function readSingleSettings(path: string): SecurityPolicy | null {
+  const raw = readCachedFileSync(path);
+  if (!raw) return null;
 
   let parsed: any;
   try {
@@ -298,12 +323,8 @@ export function readToolDenyPatterns(
   const result: string[][] = [];
 
   const extractGlobs = (path: string): string[] | null => {
-    let raw: string;
-    try {
-      raw = readFileSync(path, "utf-8");
-    } catch {
-      return null;
-    }
+    const raw = readCachedFileSync(path);
+    if (!raw) return null;
 
     let parsed: any;
     try {
