@@ -23,15 +23,15 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/mksglu/context-mode"
+    "url": "https://github.com/kianwoon/context-mode"
   },
-  "homepage": "https://github.com/mksglu/context-mode#readme",
+  "homepage": "https://github.com/kianwoon/context-mode#readme",
   "openclaw": {
     "extensions": [
       "./build/openclaw-plugin.js"
     ]
   },
-  "bugs": "https://github.com/mksglu/context-mode/issues",
+  "bugs": "https://github.com/kianwoon/context-mode/issues",
   "main": "./build/opencode-plugin.js",
   "exports": {
     ".": "./build/opencode-plugin.js",
