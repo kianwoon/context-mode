@@ -10,6 +10,8 @@
 export interface LifecycleGuardOptions {
   /** Interval in ms to check parent liveness. Default: 30_000 */
   checkIntervalMs?: number;
+  /** Delay in ms before attaching stdin close guard. Default: 3_000 */
+  stdinDelayMs?: number;
   /** Called when parent death or stdin close is detected. */
   onShutdown: () => void;
   /** Injectable parent-alive check (for testing). Default: ppid-based check. */
@@ -55,12 +57,19 @@ export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
   timer.unref();
 
   // P0: Stdin close — parent pipe broken
-  // Must resume stdin to receive close/end events (Node starts paused)
+  // Must resume stdin to receive close/end events (Node starts paused).
+  // Delayed to allow graceful startup — avoids false shutdown during init.
+  let stdinGuardActive = false;
+  let stdinTimer: ReturnType<typeof setTimeout> | undefined;
   const onStdinClose = () => shutdown();
-  process.stdin.resume();
-  process.stdin.on("end", onStdinClose);
-  process.stdin.on("close", onStdinClose);
-  process.stdin.on("error", onStdinClose);
+  stdinTimer = setTimeout(() => {
+    stdinTimer = undefined;
+    stdinGuardActive = true;
+    process.stdin.resume();
+    process.stdin.on("end", onStdinClose);
+    process.stdin.on("close", onStdinClose);
+    process.stdin.on("error", onStdinClose);
+  }, opts.stdinDelayMs ?? 3_000);
 
   // P0: OS signals — terminal close, kill, ctrl+c
   const signals: NodeJS.Signals[] = ["SIGTERM", "SIGINT"];
@@ -70,9 +79,14 @@ export function startLifecycleGuard(opts: LifecycleGuardOptions): () => void {
   return () => {
     stopped = true;
     clearInterval(timer);
-    process.stdin.removeListener("end", onStdinClose);
-    process.stdin.removeListener("close", onStdinClose);
-    process.stdin.removeListener("error", onStdinClose);
+    // Cancel pending stdin guard setup, or remove listeners if already active
+    if (stdinTimer !== undefined) {
+      clearTimeout(stdinTimer);
+    } else if (stdinGuardActive) {
+      process.stdin.removeListener("end", onStdinClose);
+      process.stdin.removeListener("close", onStdinClose);
+      process.stdin.removeListener("error", onStdinClose);
+    }
     for (const sig of signals) process.removeListener(sig, shutdown);
   };
 }
