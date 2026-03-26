@@ -44,6 +44,7 @@ process.on("unhandledRejection", (err) => {
 });
 process.on("uncaughtException", (err) => {
   process.stderr.write(`[context-mode] uncaughtException: ${err?.message ?? err}\n`);
+  process.exit(1);
 });
 
 const runtimes = detectRuntimes();
@@ -1988,11 +1989,12 @@ async function main() {
   };
   const gracefulShutdown = async () => {
     shutdown();
+    try {
+      await server.close?.();
+    } catch { /* transport may already be closed */ }
     process.exit(0);
   };
   process.on("exit", shutdown);
-  process.on("SIGINT", () => { gracefulShutdown(); });
-  process.on("SIGTERM", () => { gracefulShutdown(); });
 
   // Lifecycle guard: detect parent death + stdin close to prevent orphaned processes (#103)
   startLifecycleGuard({ onShutdown: () => gracefulShutdown() });
