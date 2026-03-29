@@ -7,6 +7,62 @@ import { homedir } from "node:os";
 import { createRequire } from "node:module";
 
 /**
+ * Remove stale context-mode hook entries from settings.json.
+ * When context-mode upgrades (e.g. 1.3.0 → 1.4.0), old hook entries
+ * with the previous version path remain but point to non-existent dirs,
+ * silently breaking all context-mode hooks.
+ */
+function cleanupStaleHookEntries(settingsPath, currentVersion) {
+  try {
+    if (!existsSync(settingsPath)) return;
+
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    const hookSections = settings?.hooks || {};
+    const contextModeScripts = new Set([
+      "pretooluse.mjs",
+      "posttooluse.mjs",
+      "precompact.mjs",
+      "sessionstart.mjs",
+      "userpromptsubmit.mjs",
+    ]);
+    const versionRegex = /[\/\\](\d+\.\d+\.\d+)[\/\\]/;
+    let cleaned = 0;
+
+    for (const [, hooks] of Object.entries(hookSections)) {
+      if (!Array.isArray(hooks)) continue;
+
+      for (let i = hooks.length - 1; i >= 0; i--) {
+        const hook = hooks[i];
+        if (!hook?.hooks?.[0]?.command) continue;
+        const cmd = hook.hooks[0].command;
+
+        // Only touch entries that look like context-mode hook scripts
+        const scriptName = cmd.split(/[\/\\]/).pop();
+        if (!contextModeScripts.has(scriptName)) continue;
+
+        const versionMatch = cmd.match(versionRegex);
+        if (!versionMatch) continue;
+
+        const hookVersion = versionMatch[1];
+
+        // Remove if version doesn't match current (stale from previous install)
+        if (hookVersion !== currentVersion) {
+          hooks.splice(i, 1);
+          cleaned++;
+        }
+      }
+    }
+
+    if (cleaned > 0) {
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), "utf-8");
+      console.error(`[context-mode] Cleaned ${cleaned} stale hook entries (old versions or missing dirs)`);
+    }
+  } catch {
+    /* best effort — don't block server startup */
+  }
+}
+
+/**
  * ABI-aware native binary caching for better-sqlite3 (#148).
  * Users with mise/asdf may run concurrent sessions with different Node versions.
  * Each ABI needs its own compiled binary — cache them side-by-side.
@@ -108,6 +164,10 @@ if (cacheMatch) {
           JSON.stringify(ip, null, 2) + "\n",
           "utf-8",
         );
+
+        // Also clean up stale hook entries in settings.json that point to old versions
+        const settingsPath = resolve(homedir(), ".claude", "settings.json");
+        cleanupStaleHookEntries(settingsPath, newest);
       }
     }
   } catch {
