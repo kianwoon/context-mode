@@ -34,26 +34,32 @@ Spawn these agents simultaneously:
 
 All must report PASS before proceeding.
 
-### 2. Version Bump
+### 2. Version Bump — MANDATORY
+
+<version_bump_enforcement>
+You MUST run `npm version patch`. This is NOT optional. Do NOT skip this step.
+Do NOT manually edit package.json version. Do NOT create git tags manually.
+`npm version patch` does EVERYTHING — bump, sync manifests, stage, commit, tag.
+</version_bump_enforcement>
 
 ```bash
-# This triggers the "version" npm lifecycle hook which runs version-sync.mjs
-# version-sync updates ALL manifest files:
-#   - .claude-plugin/plugin.json
-#   - .claude-plugin/marketplace.json
-#   - .openclaw-plugin/openclaw.plugin.json
-#   - .openclaw-plugin/package.json
-#   - openclaw.plugin.json
-#   - .pi/extensions/context-mode/package.json
 npm version patch
 ```
 
-**What happens under the hood:**
-1. `npm version patch` bumps `package.json` version (e.g., 1.0.54 → 1.0.55)
-2. The `version` lifecycle script runs `scripts/version-sync.mjs`
-3. `version-sync.mjs` syncs the new version to all 6 manifest files
-4. The `version` script stages the manifest files
-5. npm creates a git commit and tag
+This single command does ALL of the following automatically:
+1. Bumps `package.json` version (e.g., 1.0.56 → 1.0.57)
+2. Triggers `version` lifecycle hook → runs `scripts/version-sync.mjs`
+3. `version-sync.mjs` syncs version to ALL 6 manifest files:
+   - `.claude-plugin/plugin.json`
+   - `.claude-plugin/marketplace.json`
+   - `.openclaw-plugin/openclaw.plugin.json`
+   - `.openclaw-plugin/package.json`
+   - `openclaw.plugin.json`
+   - `.pi/extensions/context-mode/package.json`
+4. Stages the manifest files via `git add`
+5. Creates a git commit and `v{VERSION}` tag
+
+**Do NOT create your own commit or tag. `npm version patch` handles it.**
 
 ### 3. Validate (NO Build Needed)
 
