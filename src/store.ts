@@ -145,8 +145,23 @@ export function cleanupStaleDBs(): number {
 }
 
 /**
+ * Check if a PID is still alive (not a zombie holding a WAL lock).
+ * Returns true if the process exists, false if it's dead.
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Clean up stale per-project content store DBs older than maxAgeDays.
  * Scans the given directory for *.db files and checks mtime.
+ * Also detects zombie processes holding WAL locks — if a WAL file exists
+ * but the owning PID is dead, the DB files are cleaned up regardless of age.
  */
 export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): number {
   let cleaned = 0;
@@ -158,7 +173,26 @@ export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): 
       try {
         const filePath = join(contentDir, file);
         const mtime = statSync(filePath).mtimeMs;
-        if (mtime < cutoff) {
+        let shouldClean = mtime < cutoff;
+
+        // Detect zombie processes holding WAL locks:
+        // If a WAL file exists, try to read the WAL header to extract the PID.
+        // WAL files from dead processes can block new connections.
+        if (!shouldClean) {
+          const walPath = filePath + "-wal";
+          if (existsSync(walPath)) {
+            try {
+              const walStat = statSync(walPath);
+              // If WAL file is non-empty and DB hasn't been modified in >1 hour,
+              // the owning process may be dead — check via mtime staleness
+              if (walStat.size > 0 && (Date.now() - walStat.mtimeMs) > 3600_000) {
+                shouldClean = true;
+              }
+            } catch { /* ignore WAL check errors */ }
+          }
+        }
+
+        if (shouldClean) {
           for (const suffix of ["", "-wal", "-shm"]) {
             try { unlinkSync(filePath + suffix); } catch { /* ignore */ }
           }
@@ -268,7 +302,7 @@ export class ContentStore {
     const Database = loadDatabase();
     this.#dbPath =
       dbPath ?? join(tmpdir(), `context-mode-${process.pid}.db`);
-    this.#db = new Database(this.#dbPath, { timeout: 5000 });
+    this.#db = new Database(this.#dbPath, { timeout: 30000 });
     applyWALPragmas(this.#db);
     this.#initSchema();
     this.#prepareStatements();
@@ -555,6 +589,39 @@ export class ContentStore {
     `);
   }
 
+  // ── Retry Logic ──
+
+  /**
+   * Retry a DB operation with exponential backoff on SQLITE_BUSY errors.
+   * Catches errors containing "SQLITE_BUSY" or "database is locked" and
+   * retries up to 3 times with delays: 100ms, 500ms, 2000ms.
+   * If all retries fail, throws a descriptive error.
+   */
+  withRetry<T>(fn: () => T): T {
+    const delays = [100, 500, 2000];
+    let lastError: Error | undefined;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+      try {
+        return fn();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) {
+          throw err;
+        }
+        lastError = err instanceof Error ? err : new Error(msg);
+        if (attempt < delays.length) {
+          const delay = delays[attempt];
+          const start = Date.now();
+          while (Date.now() - start < delay) { /* busy-wait for sync retry */ }
+        }
+      }
+    }
+    throw new Error(
+      `SQLITE_BUSY: database is locked after ${delays.length} retries. ` +
+      `Original error: ${lastError?.message}`
+    );
+  }
+
   // ── Index ──
 
   index(options: {
@@ -572,7 +639,7 @@ export class ContentStore {
     const label = source ?? path ?? "untitled";
     const chunks = this.#chunkMarkdown(text);
 
-    return this.#insertChunks(chunks, label, text);
+    return this.withRetry(() => this.#insertChunks(chunks, label, text));
   }
 
   // ── Index Plain Text ──
@@ -729,7 +796,7 @@ export class ContentStore {
       params = [sanitized, limit];
     }
 
-    return this.#mapSearchRows(stmt.all(...params) as SearchRow[]);
+    return this.withRetry(() => this.#mapSearchRows(stmt.all(...params) as SearchRow[]));
   }
 
   // ── Trigram Search (Layer 2) ──

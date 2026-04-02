@@ -1214,3 +1214,49 @@ describe("Persistent content store lifecycle", () => {
     store2.cleanup();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SQLITE_BUSY Retry Logic (#218)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("SQLITE_BUSY retry logic", () => {
+  test("ContentStore uses 30s timeout", () => {
+    const storeSrc = readFileSync(
+      join(__dirname, "../src/store.ts"),
+      "utf-8",
+    );
+    expect(storeSrc).toContain("timeout: 30000");
+  });
+
+  test("ContentStore retries on SQLITE_BUSY and succeeds", () => {
+    const store = createStore();
+    // Verify the withRetry method exists
+    expect(typeof (store as any).withRetry).toBe("function");
+
+    // Test that withRetry retries on SQLITE_BUSY and eventually succeeds
+    let attempts = 0;
+    const result = (store as any).withRetry(() => {
+      attempts++;
+      if (attempts < 3) {
+        throw new Error("SQLITE_BUSY: database is locked");
+      }
+      return "success";
+    });
+    expect(result).toBe("success");
+    expect(attempts).toBe(3);
+    store.close();
+  });
+
+  test("ContentStore returns error after max retries exhausted", () => {
+    const store = createStore();
+
+    // withRetry should throw after all retries are exhausted
+    expect(() => {
+      (store as any).withRetry(() => {
+        throw new Error("SQLITE_BUSY: database is locked");
+      });
+    }).toThrow(/SQLITE_BUSY.*3 retries/);
+
+    store.close();
+  });
+});
