@@ -2,8 +2,8 @@
 /**
  * context-mode v2 — Lean MCP server
  *
- * Three tools: execute, batch_execute, search.
- * No hooks, no adapters, no session DB, no analytics.
+ * Four tools: execute, batch_execute, search, fetch_and_index.
+ * Two auto-enforcing hooks: log-read-guard, web-fetch-guard.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
