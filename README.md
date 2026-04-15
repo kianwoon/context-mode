@@ -44,7 +44,7 @@ Requires Node.js 22+ (uses built-in `node:sqlite`). No build step, no native dep
 3. **search** — BM25 search over previously indexed content. One call, many queries.
 4. **fetch_and_index** — Fetch a URL, convert HTML to markdown, index into FTS5, return structured summary. Follow-up via `search()`.
 
-**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB) and `WebFetch`/`webReader` — redirecting to the tools above.
+**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB), `WebFetch`/`webReader` (raw HTML dumps), and `WebSearch` (US-only, unreliable) — redirecting to the tools above.
 
 **When to use what:**
 - `Read` → files you want to **edit** (need exact content for Edit tool)
