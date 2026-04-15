@@ -7,6 +7,8 @@
 
 Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 2 auto-enforcing hooks.
 
+<img width="1694" height="939" alt="Screenshot 2026-04-16 at 4 10 26 AM" src="https://github.com/user-attachments/assets/be122d15-3483-4807-b0c3-98458046bf00" />
+
 ## Why
 
 Every LLM has a finite context window — whether it's 200K, 128K, or 32K tokens. Every token spent on raw tool output is a token NOT available for reasoning.
