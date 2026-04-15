@@ -79,6 +79,20 @@ src/truncate.ts  — Output truncation
 hooks/           — PreToolUse guards (auto-enforce usage patterns)
 ```
 
+## Data lifecycle
+
+No user intervention needed — the plugin self-manages:
+
+| Mechanism | When | What |
+|-----------|------|------|
+| **Per-session DB** | On start | Each session gets its own temp SQLite DB (`context-mode-{pid}.db`). No cross-session accumulation. |
+| **Source dedup** | On index | Re-indexing the same source/label atomically replaces old content — prevents stale build-fix-build buildup. |
+| **TTL eviction** | On index | Entries older than 60 minutes are evicted before each new insert. |
+| **Session cleanup** | On exit | DB files + WAL/SHM are deleted when the process exits. |
+| **Orphan sweep** | On start | Stale DBs from dead PIDs or orphaned sessions (untouched >4hrs) are cleaned up at launch. |
+
+Result: the knowledge base stays lean automatically. No config, no cron, no manual cleanup.
+
 ## What's not here (by design)
 
 No adapters, no session DB, no CLI, no analytics. PreToolUse hooks auto-enforce best practices.
