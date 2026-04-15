@@ -1,0 +1,11 @@
+{
+  "name": "context-mode",
+  "version": "2.0.0",
+  "description": "Sandboxed code execution + FTS5 knowledge base. 3 tools: execute, batch_execute, search.",
+  "mcpServers": {
+    "context-mode": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/build/index.js"]
+    }
+  }
+}

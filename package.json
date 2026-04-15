@@ -1,0 +1,56 @@
+{
+  "name": "context-mode",
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Sandboxed code execution + FTS5 knowledge base. 3 tools: execute, batch_execute, search.",
+  "author": "Kian Woon",
+  "license": "Elastic-2.0",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "context-window",
+    "sandbox",
+    "code-execution",
+    "fts5",
+    "bm25"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kianwoon/context-mode"
+  },
+  "homepage": "https://github.com/kianwoon/context-mode#readme",
+  "bugs": "https://github.com/kianwoon/context-mode/issues",
+  "main": "./build/index.js",
+  "exports": {
+    ".": "./build/index.js"
+  },
+  "files": [
+    "build",
+    ".claude-plugin",
+    ".mcp.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=build/index.js --external:better-sqlite3 --minify",
+    "dev": "npx tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "zod": "^3.25.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^12.6.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.19.11",
+    "esbuild": "^0.27.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

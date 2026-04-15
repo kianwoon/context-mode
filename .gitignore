@@ -1,0 +1,10 @@
+node_modules/
+# Build output — esbuild bundle (build/index.js) is committed for zero-build install
+build/*
+!build/index.js
+*.tsbuildinfo
+.DS_Store
+*.db
+package-lock.json
+.claude/worktrees/
+.claude-worktrees/

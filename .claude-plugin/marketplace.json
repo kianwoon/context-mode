@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "context-mode",
+  "description": "Sandboxed code execution + FTS5 knowledge base for Claude Code",
+  "owner": {
+    "name": "Kian Woon"
+  },
+  "plugins": [
+    {
+      "name": "context-mode",
+      "description": "Sandboxed code execution + FTS5 knowledge base. 3 MCP tools: execute, batch_execute, search. Zero hooks, zero build step.",
+      "category": "development",
+      "source": "./"
+    }
+  ]
+}
