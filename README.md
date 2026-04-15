@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-Elastic--2.0-green)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![CI](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml/badge.svg)](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml)
+[![Security](https://img.shields.io/badge/security-OpenSSF%20Scorecard-brightgreen)](https://securityscorecard.dev/#/github.com/kianwoon/context-mode)
 
 Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 2 auto-enforcing hooks.
 
