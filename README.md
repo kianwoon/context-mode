@@ -1,5 +1,10 @@
 # context-mode
 
+[![Version](https://img.shields.io/badge/version-2.1.0-blue)](https://github.com/kianwoon/context-mode/releases)
+[![License](https://img.shields.io/badge/license-Elastic--2.0-green)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
+[![CI](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml/badge.svg)](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml)
+
 Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 2 auto-enforcing hooks.
 
 ## Why
