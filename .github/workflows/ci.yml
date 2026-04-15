@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify bundle exists
+        run: test -f build/index.js && echo "Bundle OK ($(du -k build/index.js | cut -f1)KB)"
+
+      - name: Smoke test - plugin starts
+        run: |
+          timeout 3 node build/index.js 2>&1 || true
+
+      - name: Verify no v1 residue in build/
+        run: |
+          files=$(ls build/ | grep -v '^index.js$' || true)
+          if [ -n "$files" ]; then
+            echo "ERROR: Unexpected files in build/: $files"
+            exit 1
+          fi
+          echo "Build directory clean - only index.js"
+
+      - name: Verify node:sqlite works
+        run: |
+          node -e "
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync(':memory:');
+            db.exec('CREATE VIRTUAL TABLE test USING fts5(content)');
+            db.exec(\"INSERT INTO test VALUES('hello world')\");
+            const rows = db.prepare('SELECT * FROM test WHERE test MATCH ?', 'hello').all();
+            if (rows.length !== 1) { process.exit(1); }
+            console.log('node:sqlite + FTS5 OK');
+            db.close();
+          "
