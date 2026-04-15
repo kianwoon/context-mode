@@ -4,9 +4,9 @@ Sandboxed code execution + FTS5 knowledge base for Claude Code. 3 MCP tools, zer
 
 ## Why
 
-Claude's context window is limited (~200K tokens). Every token spent on raw tool output is a token NOT available for reasoning.
+Every LLM has a finite context window — whether it's 200K, 128K, or 32K tokens. Every token spent on raw tool output is a token NOT available for reasoning.
 
-**The problem:** Reading files, running commands, and searching codebases floods your context window with raw data. A typical research session (explore structure, find routes, debug errors) can burn through 135K tokens — 68% of your window — before Claude even starts thinking.
+**The problem:** Reading files, running commands, and searching codebases floods your context window with raw data. A typical research session (explore structure, find routes, debug errors) can burn through 135K tokens — most of your window — before the LLM even starts thinking.
 
 **The fix:** context-mode keeps raw data in a sandbox. Write code that does the work, `console.log()` only the answer. The raw output stays out of context.
 
