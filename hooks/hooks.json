@@ -12,7 +12,7 @@
         ]
       },
       {
-        "matcher": "WebFetch|webReader",
+        "matcher": "WebFetch|webReader|WebSearch",
         "hooks": [
           {
             "type": "command",
