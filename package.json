@@ -32,7 +32,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=build/index.js --external:better-sqlite3 --minify",
+    "build": "tsc && rm -rf build && esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=build/index.js --external:better-sqlite3 --minify",
     "dev": "npx tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
