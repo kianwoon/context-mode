@@ -16,6 +16,7 @@ import type { Language } from "./runtime.js";
 import { truncateJSON } from "./truncate.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import TurndownService from "turndown";
 
 // ── Setup ──────────────────────────────────────────────────
 
@@ -252,6 +253,118 @@ server.registerTool(
         `Search error: ${err instanceof Error ? err.message : String(err)}`,
         true,
       );
+    }
+  },
+);
+
+// ── Tool 4: fetch_and_index ─────────────────────────────────
+
+const turndown = new TurndownService({
+  headingStyle: "atx",
+  codeBlockStyle: "fenced",
+});
+
+server.registerTool(
+  "fetch_and_index",
+  {
+    title: "Fetch URL and Index",
+    description:
+      `Fetches a URL, converts HTML to markdown, indexes into FTS5 knowledge base. ` +
+      `Returns structured summary — sections, links, and optional search results. ` +
+      `Use this INSTEAD of WebFetch/webReader to avoid flooding context with raw HTML.`,
+    inputSchema: {
+      url: z.string().describe("URL to fetch and index"),
+      queries: z.preprocess(
+        (val: unknown) => coerceStringArray(val),
+        z.array(z.string()).optional().default([])
+          .describe("Optional queries to search after indexing"),
+      ),
+      timeout: z.coerce.number().optional().default(30_000)
+        .describe("Fetch timeout in ms (default: 30000)"),
+    },
+  },
+  async ({ url, queries, timeout }) => {
+    try {
+      // Fetch with timeout
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout);
+      let html: string;
+      try {
+        const res = await globalThis.fetch(url, { signal: controller.signal });
+        if (!res.ok) {
+          return textResult(`HTTP ${res.status} ${res.statusText} for ${url}`, true);
+        }
+        html = await res.text();
+      } finally {
+        clearTimeout(timer);
+      }
+
+      // Extract title from raw HTML for section inventory
+      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const pageTitle = titleMatch ? titleMatch[1].trim() : new URL(url).hostname;
+
+      // Convert HTML → markdown
+      const markdown = turndown.turndown(html);
+
+      // Extract links for reference summary
+      const linkMatches = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi)];
+      const links: string[] = [];
+      const seen = new Set<string>();
+      for (const m of linkMatches) {
+        const href = m[1].trim();
+        const text = m[2].trim();
+        if (href && !seen.has(href) && !href.startsWith("javascript:")) {
+          seen.add(href);
+          links.push(`- [${text || href}](${href})`);
+        }
+        if (links.length >= 50) break; // cap at 50 links
+      }
+
+      // Index markdown
+      const indexed = store.index({ content: markdown, source: url });
+
+      // Section inventory
+      const allSections = store.getChunksBySource(indexed.sourceId);
+      const inventory: string[] = [];
+      for (const s of allSections) {
+        const kb = (Buffer.byteLength(s.content) / 1024).toFixed(1);
+        inventory.push(`- ${s.title} (${kb}KB)`);
+      }
+
+      // Optional search queries
+      const searchResults: string[] = [];
+      for (const q of queries) {
+        const results = store.search(q, 5, url);
+        if (results.length > 0) {
+          searchResults.push(`### ${q}`);
+          for (const r of results) {
+            searchResults.push(`**${r.title}**\n${r.content}\n`);
+          }
+        }
+      }
+
+      const totalKB = (Buffer.byteLength(markdown) / 1024).toFixed(1);
+      const output = [
+        `Fetched: ${pageTitle}`,
+        `URL: ${url}`,
+        `Content: ${totalKB}KB, ${indexed.totalChunks} sections indexed.`,
+        "",
+        "## Indexed Sections",
+        "",
+        ...inventory,
+        "",
+        links.length > 0 ? `## Links (${links.length})\n\n${links.join("\n")}` : null,
+        "",
+        ...searchResults,
+      ].filter(Boolean).join("\n");
+
+      return textResult(truncateJSON(output, MAX_RESPONSE_BYTES, 0));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("abort")) {
+        return textResult(`Fetch timed out after ${timeout}ms: ${url}`, true);
+      }
+      return textResult(`Fetch error: ${msg}`, true);
     }
   },
 );

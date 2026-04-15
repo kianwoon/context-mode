@@ -1,6 +1,6 @@
 # context-mode
 
-Sandboxed code execution + FTS5 knowledge base for Claude Code. 3 MCP tools, zero hooks.
+Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 2 auto-enforcing hooks.
 
 ## Why
 
@@ -35,17 +35,22 @@ Requires Node.js 22+ (uses built-in `node:sqlite`). No build step, no native dep
 | `execute(language, code, timeout?)` | Run code in 11 languages via sandboxed subprocess |
 | `batch_execute(commands, queries, timeout?)` | Run shell commands, auto-index output, search |
 | `search(queries, limit?)` | BM25 search over indexed content |
+| `fetch_and_index(url, queries?, timeout?)` | Fetch URL, convert HTML→markdown, index, return summary |
 
 ## How it works
 
 1. **execute** — Write code that processes data. Only `console.log()` output enters context.
 2. **batch_execute** — Run multiple shell commands, auto-index output into FTS5, search for what you need. One call replaces 30+ tool calls.
 3. **search** — BM25 search over previously indexed content. One call, many queries.
+4. **fetch_and_index** — Fetch a URL, convert HTML to markdown, index into FTS5, return structured summary. Follow-up via `search()`.
+
+**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB) and `WebFetch`/`webReader` — redirecting to the tools above.
 
 **When to use what:**
 - `Read` → files you want to **edit** (need exact content for Edit tool)
 - `execute` → data you want to **analyze** (count, filter, transform, parse)
 - `batch_execute` → codebases you want to **research** (explore, index, query)
+- `fetch_and_index` → web pages you want to **read** (fetch, index, query)
 - `search` → follow-up queries on indexed content
 
 ## Build
@@ -54,20 +59,21 @@ Requires Node.js 22+ (uses built-in `node:sqlite`). No build step, no native dep
 npm run build
 ```
 
-Outputs `build/index.js` (~364KB single bundle). The bundle is committed to the repo for zero-build install.
+Outputs `build/index.js` (~607KB single bundle). The bundle is committed to the repo for zero-build install.
 
 ## Architecture
 
 ```
-src/index.ts     — MCP server entry (~270 lines)
+src/index.ts     — MCP server entry (~350 lines, 4 tools)
 src/executor.ts  — PolyglotExecutor: 11 languages, process group kill
 src/store.ts     — FTS5/BM25 content store (SQLite)
 src/db-base.ts   — Multi-backend SQLite: node:sqlite (primary) → better-sqlite3 (fallback)
 src/runtime.ts   — Runtime detection
 src/types.ts     — Shared types
 src/truncate.ts  — Output truncation
+hooks/           — PreToolUse guards (auto-enforce usage patterns)
 ```
 
 ## What's not here (by design)
 
-No hooks, no adapters, no session DB, no CLI, no analytics. CLAUDE.md rules replace hooks.
+No adapters, no session DB, no CLI, no analytics. PreToolUse hooks auto-enforce best practices.
