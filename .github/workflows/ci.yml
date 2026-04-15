@@ -53,7 +53,8 @@ jobs:
             const db = new DatabaseSync(':memory:');
             db.exec('CREATE VIRTUAL TABLE test USING fts5(content)');
             db.exec(\"INSERT INTO test VALUES('hello world')\");
-            const rows = db.prepare('SELECT * FROM test WHERE test MATCH ?', 'hello').all();
+            const stmt = db.prepare('SELECT * FROM test WHERE test MATCH ?');
+            const rows = stmt.all('hello');
             if (rows.length !== 1) { process.exit(1); }
             console.log('node:sqlite + FTS5 OK');
             db.close();
