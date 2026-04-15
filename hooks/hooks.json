@@ -1,4 +1,16 @@
 {
-  "description": "Project hooks",
-  "hooks": {}
+  "description": "Context-mode PreToolUse guard — blocks Read on data-heavy files (.log, .csv, .xml, .sql, .json >100KB) to conserve context window",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log-read-guard.cjs"
+          }
+        ]
+      }
+    ]
+  }
 }
