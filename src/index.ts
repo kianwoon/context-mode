@@ -264,6 +264,17 @@ const turndown = new TurndownService({
   codeBlockStyle: "fenced",
 });
 
+/** Detect pages that return RSC/SPA payloads instead of renderable HTML. */
+function isUnparseable(html: string): boolean {
+  // Next.js RSC streaming: self.__next_f.push([...])
+  if (html.includes("self.__next_f.push")) return true;
+  // High density of JS chunk references with minimal HTML structure
+  const chunkRefs = (html.match(/static\/chunks\/[\w-]+\.js/g) || []).length;
+  const htmlTags = (html.match(/<\/?(?:div|p|h[1-6]|ul|ol|li|table|section|article|main|header|footer)\b/g) || []).length;
+  if (chunkRefs > 10 && htmlTags < 5) return true;
+  return false;
+}
+
 server.registerTool(
   "fetch_and_index",
   {
@@ -297,6 +308,17 @@ server.registerTool(
         html = await res.text();
       } finally {
         clearTimeout(timer);
+      }
+
+      // Detect unparseable formats (RSC, SPA shells, etc.)
+      if (isUnparseable(html)) {
+        return textResult(
+          `fetch_and_index: Page returned an unparseable format (RSC/SPA payload). ` +
+          `The HTML-to-markdown converter cannot process this content. ` +
+          `Source the content from an alternative URL or format ` +
+          `(e.g., GitHub releases, API endpoint, raw markdown, cached/archive version).\n\nURL: ${url}`,
+          true,
+        );
       }
 
       // Extract title from raw HTML for section inventory
