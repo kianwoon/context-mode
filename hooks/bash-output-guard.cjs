@@ -41,12 +41,11 @@ try {
     !/-n\s*\d/.test(command) &&
     !/--max-count/.test(command);
 
-  // git diff without --stat, --name-only, or a file path
+  // git diff without --stat, --name-only, or --name-status
   const isGitDiff = /^git\s+diff\b/.test(command) &&
     !/--stat/.test(command) &&
     !/--name-only/.test(command) &&
-    !/--name-status/.test(command) &&
-    command.split(/\s+/).length <= 3;
+    !/--name-status/.test(command);
 
   // git show without --stat or --name-only (full diff dump)
   const isGitShow = /^git\s+show\b/.test(command) &&
