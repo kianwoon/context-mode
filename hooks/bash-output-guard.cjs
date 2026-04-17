@@ -6,13 +6,17 @@
  * Trigger: PreToolUse
  * Latency: ~2ms (single JSON parse + regex check)
  *
- * Blocks Bash commands that produce large output:
+ * Blocks Bash commands that produce large/unbounded output:
  *   - git log (without --oneline or -n limit)
- *   - git diff (without file path or stat flag)
- *   - find (broad searches)
- *   - cat/head/tail on large files
+ *   - git diff (without --stat or file path)
+ *   - git show (without --stat or --name-only)
+ *   - git blame (always — line-by-line annotation)
+ *   - git reflog (always — unbounded history)
+ *   - git stash list (always — can grow indefinitely)
+ *   - git branch -a (all branches)
+ *   - find (broad searches without head or maxdepth)
  *
- * Redirects to execute() or batch_execute() instead.
+ * Redirects to execute() or batch_execute() with bounded alternatives.
  */
 
 'use strict';
@@ -29,39 +33,67 @@ try {
 
   const command = (input.tool_input?.command ?? '').trim();
 
-  // Patterns that produce large output
+  // ─── Git Commands ───────────────────────────────────────────────
+
   // git log without --oneline or -n<N> limit
   const isGitLog = /^git\s+log\b/.test(command) &&
     !/--oneline/.test(command) &&
     !/-n\s*\d/.test(command) &&
     !/--max-count/.test(command);
 
-  // git diff without --stat or file path (full diff dump)
+  // git diff without --stat, --name-only, or a file path
   const isGitDiff = /^git\s+diff\b/.test(command) &&
     !/--stat/.test(command) &&
     !/--name-only/.test(command) &&
     !/--name-status/.test(command) &&
-    command.split(/\s+/).length <= 3; // bare "git diff" or "git diff HEAD"
+    command.split(/\s+/).length <= 3;
 
-  // Broad find commands
+  // git show without --stat or --name-only (full diff dump)
+  const isGitShow = /^git\s+show\b/.test(command) &&
+    !/--stat/.test(command) &&
+    !/--name-only/.test(command) &&
+    !/--name-status/.test(command);
+
+  // git blame — line-by-line annotation, always dangerous
+  const isGitBlame = /^git\s+blame\b/.test(command);
+
+  // git reflog — unbounded history, always dangerous
+  const isGitReflog = /^git\s+reflog\b/.test(command);
+
+  // git stash list — can grow indefinitely with many stashes
+  const isGitStash = /^git\s+stash\s+(list|show|pop|apply)\b/.test(command) &&
+    !/-n\s*\d/.test(command) &&
+    !/--max-count/.test(command);
+
+  // git branch -a (all remotes + locals) — can be very long
+  const isGitBranchAll = /^git\s+branch\b/.test(command) &&
+    /-a\b/.test(command);
+
+  // ─── Shell Commands ────────────────────────────────────────────────
+
+  // Broad find without head or maxdepth 1-2
   const isBroadFind = /^find\s+[^|]*\s(-name|-type|-path)\s/.test(command) &&
     !/head/.test(command) &&
     !/-maxdepth\s+[12]\b/.test(command);
 
-  if (!isGitLog && !isGitDiff && !isBroadFind) process.exit(0);
+  const isBlocked =
+    isGitLog || isGitDiff || isGitShow || isGitBlame ||
+    isGitReflog || isGitStash || isGitBranchAll || isBroadFind;
 
+  if (!isBlocked) process.exit(0);
+
+  // ─── Suggestions ───────────────────────────────────────────────────
   let blockedCmd, suggestion;
 
   if (isGitLog) {
     blockedCmd = 'git log';
     suggestion =
-      `Use execute() instead to process git log output:\n` +
+      `Use execute() instead:\n` +
       `\`\`\`\nexecute({\n` +
       `  language: "shell",\n` +
       `  code: \`git log --oneline -20\`\n` +
       `})\n\`\`\`\n` +
-      `Or batch_execute() for multi-command research.\n` +
-      `If you must use Bash, add --oneline or -n<N> to limit output.`;
+      `Or batch_execute() for multi-command research.`;
   } else if (isGitDiff) {
     blockedCmd = 'git diff';
     suggestion =
@@ -70,12 +102,56 @@ try {
       `  language: "shell",\n` +
       `  code: \`git diff --stat\`\n` +
       `})\n\`\`\`\n` +
-      `Or batch_execute() to run and index results.\n` +
-      `If you must use Bash, add --stat or --name-only to limit output.`;
+      `Or batch_execute() to run and index results.`;
+  } else if (isGitShow) {
+    blockedCmd = 'git show';
+    suggestion =
+      `Use execute() instead:\n` +
+      `\`\`\`\nexecute({\n` +
+      `  language: "shell",\n` +
+      `  code: \`git show --stat <SHA>\`\n` +
+      `})\n\`\`\`\n` +
+      `Add --stat or --name-only to limit output.`;
+  } else if (isGitBlame) {
+    blockedCmd = 'git blame';
+    suggestion =
+      `Use execute() instead with a scoped file:\n` +
+      `\`\`\`\nexecute({\n` +
+      `  language: "shell",\n` +
+      `  code: \`git blame --count src/utils.js\`\n` +
+      `})\n\`\`\`\n` +
+      `Or process the file directly with execute() and parse it there.`;
+  } else if (isGitReflog) {
+    blockedCmd = 'git reflog';
+    suggestion =
+      `Use execute() instead with a limit:\n` +
+      `\`\`\`\nexecute({\n` +
+      `  language: "shell",\n` +
+      `  code: \`git reflog -20\`\n` +
+      `})\n\`\`\`\n` +
+      `Reflog is unbounded — always use -n<N> to limit entries.`;
+  } else if (isGitStash) {
+    blockedCmd = 'git stash list';
+    suggestion =
+      `Use execute() instead:\n` +
+      `\`\`\`\nexecute({\n` +
+      `  language: "shell",\n` +
+      `  code: \`git stash list | head -20\`\n` +
+      `})\n\`\`\`\n` +
+      `Or pipe through head to bound output.`;
+  } else if (isGitBranchAll) {
+    blockedCmd = 'git branch -a';
+    suggestion =
+      `Use execute() instead:\n` +
+      `\`\`\`\nexecute({\n` +
+      `  language: "shell",\n` +
+      `  code: \`git branch -a | head -30\`\n` +
+      `})\n\`\`\`\n` +
+      `Or use batch_execute() to run and index results.`;
   } else {
     blockedCmd = 'find';
     suggestion =
-      `Use execute() or batch_execute() instead:\n` +
+      `Use execute() instead:\n` +
       `\`\`\`\nexecute({\n` +
       `  language: "shell",\n` +
       `  code: \`find . -name "*.js" | head -20\`\n` +
