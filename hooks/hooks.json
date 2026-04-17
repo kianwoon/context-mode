@@ -1,5 +1,5 @@
 {
-  "description": "Context-mode PreToolUse guards — blocks Read on data-heavy files (.log, .csv, .xml, .sql, .json >100KB) and WebFetch/webReader to conserve context window",
+  "description": "Context-mode PreToolUse guards — blocks Read on data-heavy files, WebFetch/webReader, and high-output Bash commands (bare git log/diff, broad find) to conserve context window",
   "hooks": {
     "PreToolUse": [
       {
@@ -8,6 +8,15 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log-read-guard.cjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/bash-output-guard.cjs"
           }
         ]
       },
