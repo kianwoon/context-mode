@@ -1,12 +1,12 @@
 # context-mode
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue)](https://github.com/kianwoon/context-mode/releases)
+[![Version](https://img.shields.io/badge/version-2.2.0-blue)](https://github.com/kianwoon/context-mode/releases)
 [![License](https://img.shields.io/badge/license-Elastic--2.0-green)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![CI](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml/badge.svg)](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml)
 [![Security](https://img.shields.io/badge/security-OpenSSF%20Scorecard-brightgreen)](https://securityscorecard.dev/#/github.com/kianwoon/context-mode)
 
-Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 2 auto-enforcing hooks.
+Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 3 auto-enforcing hooks.
 
 <img width="1694" height="939" alt="Screenshot 2026-04-16 at 4 10 26 AM" src="https://github.com/user-attachments/assets/be122d15-3483-4807-b0c3-98458046bf00" />
 
@@ -52,7 +52,7 @@ Requires Node.js 22+ (uses built-in `node:sqlite`). No build step, no native dep
 3. **search** — BM25 search over previously indexed content. One call, many queries.
 4. **fetch_and_index** — Fetch a URL, convert HTML to markdown, index into FTS5, return structured summary. Follow-up via `search()`.
 
-**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB), `WebFetch`/`webReader` (raw HTML dumps), and `WebSearch` (US-only, unreliable) — redirecting to the tools above.
+**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB), `WebFetch`/`webReader` (raw HTML dumps), `WebSearch` (US-only, unreliable), and high-output `Bash` commands (bare `git log`, `git diff`, `git show`, `git blame`, `git reflog`, `git stash list`, `git branch -a`, broad `find`) — redirecting to the tools above.
 
 **When to use what:**
 - `Read` → files you want to **edit** (need exact content for Edit tool)
