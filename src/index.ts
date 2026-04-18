@@ -13,8 +13,7 @@ import { PolyglotExecutor } from "./executor.js";
 import { ContentStore, cleanupStaleDBs } from "./store.js";
 import { detectRuntimes, getAvailableLanguages } from "./runtime.js";
 import type { Language } from "./runtime.js";
-import { truncateJSON } from "./truncate.js";
-import { tmpdir } from "node:os";
+import { truncateJSON, truncateHeadTail } from "./truncate.js";import { tmpdir } from "node:os";
 import { join } from "node:path";
 import TurndownService from "turndown";
 
@@ -45,7 +44,7 @@ process.on("uncaughtException", (err: Error) => {
 
 // ── Helpers ────────────────────────────────────────────────
 
-const MAX_RESPONSE_BYTES = 200_000; // ~50K tokens
+const MAX_RESPONSE_BYTES = 50_000; // ~12K tokens — keeps responses lean
 
 function textResult(text: string, isError = false) {
   return { content: [{ type: "text" as const, text }], isError };
@@ -200,7 +199,7 @@ server.registerTool(
         ...searchResults,
       ].join("\n");
 
-      return textResult(truncateJSON(output, MAX_RESPONSE_BYTES, 0));
+      return textResult(truncateHeadTail(output, MAX_RESPONSE_BYTES, 30, 30));
     } catch (err) {
       return textResult(
         `Batch error: ${err instanceof Error ? err.message : String(err)}`,
@@ -380,7 +379,7 @@ server.registerTool(
         ...searchResults,
       ].filter(Boolean).join("\n");
 
-      return textResult(truncateJSON(output, MAX_RESPONSE_BYTES, 0));
+      return textResult(truncateHeadTail(output, MAX_RESPONSE_BYTES, 30, 30));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("abort")) {
