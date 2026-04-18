@@ -1,31 +1,24 @@
 {
-  "description": "Context-mode PreToolUse guards — blocks Read on data-heavy files, WebFetch/webReader, and high-output Bash commands (bare git log/diff, broad find) to conserve context window",
+  "description": "Context-mode hooks — PreToolUse redirect for raw HTML + universal PostToolUse auto-indexer for large output",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log-read-guard.cjs"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/bash-output-guard.cjs"
-          }
-        ]
-      },
-      {
-        "matcher": "WebFetch|webReader|WebSearch",
+        "matcher": "WebFetch|webReader",
         "hooks": [
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/web-fetch-guard.cjs"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read|WebSearch|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-indexer.cjs"
           }
         ]
       }

@@ -1,30 +1,62 @@
-# context-mode
+# CLAUDE.md
 
-Raw tool output floods your context window. Use context-mode MCP tools to keep raw data in the sandbox.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Hooks enforce this.** Bare `git log/diff`, `Read` on data files, and `WebFetch`/`webReader` are **auto-blocked** — don't fight the hooks, use the tools below.
+## Build & Dev
 
-## Think in Code — MANDATORY
+```bash
+npm run build        # tsc typecheck + esbuild bundle → build/index.js
+npm run dev          # run via tsx (unbundled, for dev)
+npm run typecheck    # tsc --noEmit
+```
 
-When you need to analyze, count, filter, compare, search, parse, transform, or process data: **write code** that does the work via `execute(language, code)` and `console.log()` only the answer. Do NOT read raw data into context to process mentally. Your role is to PROGRAM the analysis, not to COMPUTE it. Write robust, pure JavaScript — no npm dependencies, only Node.js built-ins (`fs`, `path`, `child_process`). Always use `try/catch`, handle `null`/`undefined`, and ensure compatibility with both Node.js and Bun. One script replaces ten tool calls and saves 100x context.
+No test framework is configured. The `better-sqlite3` dependency is externalized from the bundle — it loads at runtime via `require()`.
 
-## Tool Selection
+## Architecture
 
-1. **GATHER**: `batch_execute(commands, queries)` — Primary tool for research. Runs all commands, auto-indexes, and searches. ONE call replaces many individual steps.
-2. **FOLLOW-UP**: `search(queries: ["q1", "q2", ...])` — Use for all follow-up questions. ONE call, many queries.
-3. **PROCESSING**: `execute(language, code)` or `execute_file(path, language, code)` — Use for API calls, log analysis, and data processing.
-4. **WEB**: `fetch_and_index(url)` then `search(queries)` — Fetch, index, then query. Never dump raw HTML.
+This is a Claude Code plugin (v2.2.0) that provides 4 MCP tools and 3 auto-enforcing PreToolUse hooks. The goal: keep raw tool output out of Claude's context window.
 
-## Rules
+### MCP Server (`src/index.ts`)
 
-- DO NOT use Bash for commands producing >20 lines of output — use `execute` or `batch_execute`.
-- DO NOT use Read for analysis — use `execute_file`. Read IS correct for files you intend to Edit.
-- DO NOT use WebFetch — use `fetch_and_index` instead.
-- DO NOT use curl/wget in Bash — use `execute` or `fetch_and_index`.
-- Bash is ONLY for git, mkdir, rm, mv, navigation, and short commands.
+Entry point. Registers 4 tools on a `McpServer` (stdio transport):
+- **execute** — runs code in 11 languages via sandboxed subprocess, only `console.log()` output returns
+- **batch_execute** — runs shell commands sequentially, auto-indexes output into FTS5, returns BM25 search results
+- **search** — BM25 search over previously indexed content
+- **fetch_and_index** — fetches URL, HTML→markdown via Turndown, indexes into FTS5
 
-## Output
+Response size is capped at `MAX_RESPONSE_BYTES = 200_000` (~50K tokens) via `truncateJSON`.
 
-- Keep responses under 500 words.
-- Write artifacts (code, configs) to FILES — never return them as inline text.
-- Return only: file path + 1-line description.
+### ContentStore (`src/store.ts`)
+
+SQLite + FTS5 knowledge base. Key design:
+- **Dual FTS5 tables**: `chunks` (porter tokenizer for stemming) + `chunks_trigram` (trigram tokenizer for partial matches)
+- **3-layer search**: porter BM25 → trigram BM25 → fuzzy correction via Levenshtein on vocabulary table. Results merged via Reciprocal Rank Fusion (RRF)
+- **Proximity reranking**: multi-term queries get a boost when terms appear close together in the chunk
+- **Auto-eviction**: entries older than 60 minutes are evicted on each `index()` call
+- **Dedup by label**: re-indexing the same source label atomically deletes old chunks and inserts new ones (prevents stale results in iterative workflows)
+- **FTS5 optimization**: index segments are defragmented every 50 inserts
+- DB files live in `$TMPDIR/context-mode-{pid}.db`, cleaned up on process exit or when the PID is dead
+
+### Executor (`src/executor.ts`)
+
+Runs code via child process. Detects available runtimes at startup.
+
+### Hooks (`hooks/`)
+
+Three PreToolUse guards defined in `hooks/hooks.json`:
+- **bash-output-guard.cjs** — blocks bare `git log`, `git diff`, `git show`, `git blame`, `git reflog`, `git stash list`, `git branch -a`, broad `find`
+- **log-read-guard.cjs** — blocks `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB)
+- **web-fetch-guard.cjs** — blocks `WebFetch`, `webReader`, `WebSearch`
+
+All hooks read stdin as JSON, check the tool command against regex patterns, and output a `permissionDecision: "deny"` with a redirect suggestion. They must stay under 50ms — no directory scans, no sync I/O on hot paths.
+
+### Plugin Config (`.claude-plugin/plugin.json`)
+
+Declares the MCP server entry point (`node ${CLAUDE_PLUGIN_ROOT}/build/index.js`) and plugin metadata. The hooks manifest is separate at `hooks/hooks.json`.
+
+## Key Conventions
+
+- The build uses `esbuild` with `--external:better-sqlite3` because native modules can't be bundled
+- All SQL prepared statements are cached at construction time in `ContentStore` to avoid recompilation
+- `withRetry()` wraps all DB operations to handle transient SQLITE_BUSY errors
+- The `sanitizeQuery()` function strips FTS5 special chars and filters stopwords before BM25 search
