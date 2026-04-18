@@ -124,3 +124,47 @@ export function capBytes(str: string, maxBytes: number): string {
 
   return byteSafePrefix(str, maxBytes - markerBytes) + marker;
 }
+
+// ─────────────────────────────────────────────────────────
+// Head-tail truncation (keeps structure, drops bulk)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Truncate a multi-line string by keeping first and last lines, dropping
+ * the middle. Preserves structure (headers, signatures, recent output)
+ * while staying within `maxBytes`.
+ *
+ * @param str      - Input string (typically multi-line).
+ * @param maxBytes - Hard byte cap.
+ * @param headLines - Lines to keep from the top (default 20).
+ * @param tailLines - Lines to keep from the bottom (default 20).
+ */
+export function truncateHeadTail(
+  str: string,
+  maxBytes: number,
+  headLines: number = 20,
+  tailLines: number = 20,
+): string {
+  if (Buffer.byteLength(str) <= maxBytes) return str;
+
+  const lines = str.split('\n');
+  if (lines.length <= headLines + tailLines) {
+    return byteSafePrefix(str, maxBytes - 20) + '\n... [truncated]';
+  }
+
+  const head = lines.slice(0, headLines);
+  const tail = lines.slice(-tailLines);
+  const omitted = lines.length - headLines - tailLines;
+  const separator = `\n... [${omitted} lines omitted] ...\n`;
+
+  let result = head.join('\n') + separator + tail.join('\n');
+
+  // If still over budget, fall back to simple truncation
+  if (Buffer.byteLength(result) > maxBytes) {
+    const marker = `... [${omitted + tailLines} lines omitted]`;
+    const budget = maxBytes - Buffer.byteLength(marker) - 1;
+    result = byteSafePrefix(head.join('\n'), budget) + '\n' + marker;
+  }
+
+  return result;
+}

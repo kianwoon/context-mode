@@ -1,5 +1,5 @@
 {
-  "description": "Context-mode hooks — PreToolUse deny/redirect for high-output tools, PostToolUse FTS5 indexing for MCP tools",
+  "description": "Context-mode hooks — PreToolUse deny/redirect for high-output tools, PostToolUse FTS5 indexing for MCP tools, PreCompact survival rules",
   "hooks": {
     "PreToolUse": [
       {
@@ -37,6 +37,17 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/posttooluse-indexer.cjs"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/precompact-survival.cjs"
           }
         ]
       }
