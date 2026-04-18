@@ -1,6 +1,6 @@
 {
   "name": "context-mode",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "type": "module",
   "description": "Sandboxed code execution + FTS5 knowledge base. 4 MCP tools, 2 auto-enforcing hooks.",
   "author": "Kian Woon",
