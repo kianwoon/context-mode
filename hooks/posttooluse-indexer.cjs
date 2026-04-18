@@ -2,14 +2,13 @@
 /**
  * PostToolUse hook: Universal auto-indexer for large tool output.
  *
- * Intercepts ALL tool output after execution. If output exceeds a byte threshold,
+ * Intercepts MCP tool output after execution. If output exceeds a byte threshold,
  * indexes it into the shared FTS5 knowledge base and replaces the output with
  * a compact summary + search instructions.
  *
- * This replaces PreToolUse guards for Bash/Read — instead of guessing which
- * commands/files produce large output, we check the ACTUAL output size.
+ * NOTE: updatedMCPToolOutput only works for MCP tools (mcp__*).
+ * Built-in tools (Bash, Read, Grep) are handled by PreToolUse guards instead.
  *
- * Uses updatedMCPToolOutput to replace what Claude sees in context.
  * Shares the same SQLite DB as the MCP server via deterministic path.
  */
 
@@ -146,21 +145,12 @@ try {
   ].join('\n');
 
   // updatedMCPToolOutput only works for MCP tools (mcp__*)
-  // For built-in tools (Bash, Read, WebSearch), we just index silently
-  const isMCPTool = toolName.startsWith('mcp__');
-
-  if (isMCPTool) {
-    process.stdout.write(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'PostToolUse',
-        updatedMCPToolOutput: summary,
-      },
-    }));
-  } else {
-    // For built-in tools, just exit 0 — original output passes through unchanged
-    // Output is indexed but still goes into context (can't replace built-in tool output)
-    process.exit(0);
-  }
+  process.stdout.write(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      updatedMCPToolOutput: summary,
+    },
+  }));
 } catch {
   // On error, pass through unchanged
   process.exit(0);

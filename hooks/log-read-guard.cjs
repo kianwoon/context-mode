@@ -36,7 +36,26 @@ try {
     } catch { return false; }
   })();
 
-  if (!isBlockedExt && !isLargeJson) process.exit(0);
+  if (!isBlockedExt && !isLargeJson) {
+    // One-time guidance via additionalContext (shown once per session)
+    const guidanceDir = `/tmp/context-mode-guidance-${process.ppid}`;
+    const guidanceMarker = `${guidanceDir}/read`;
+    try {
+      fs.mkdirSync(guidanceDir, { recursive: true });
+      const fd = fs.openSync(guidanceMarker, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+      fs.closeSync(fd);
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext:
+            "Read is correct for files you intend to Edit. For analysis/exploration, use execute(language, code) instead."
+        }
+      }));
+    } catch {
+      // Marker exists — already shown guidance this session
+    }
+    process.exit(0);
+  }
 
   const fileExt = filePath.split('.').pop().toUpperCase();
   const sizeHint = isLargeJson ? ' (large JSON)' : '';

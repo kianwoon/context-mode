@@ -79,7 +79,26 @@ try {
     isGitLog || isGitDiff || isGitShow || isGitBlame ||
     isGitReflog || isGitStash || isGitBranchAll || isBroadFind;
 
-  if (!isBlocked) process.exit(0);
+  if (!isBlocked) {
+    // One-time guidance via additionalContext (shown once per session)
+    const guidanceDir = `/tmp/context-mode-guidance-${process.ppid}`;
+    const guidanceMarker = `${guidanceDir}/bash`;
+    try {
+      fs.mkdirSync(guidanceDir, { recursive: true });
+      const fd = fs.openSync(guidanceMarker, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+      fs.closeSync(fd);
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext:
+            "Use batch_execute for multi-command research. Use execute for data processing. Bash for git/mkdir/rm/mv/short commands only."
+        }
+      }));
+    } catch {
+      // Marker exists — already shown guidance this session, pass through
+    }
+    process.exit(0);
+  }
 
   // ─── Suggestions ───────────────────────────────────────────────────
   let blockedCmd, suggestion;

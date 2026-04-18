@@ -1,9 +1,27 @@
 {
-  "description": "Context-mode hooks — PreToolUse redirect for raw HTML + universal PostToolUse auto-indexer for large output",
+  "description": "Context-mode hooks — PreToolUse deny/redirect for high-output tools, PostToolUse FTS5 indexing for MCP tools",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "WebFetch|webReader",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/bash-output-guard.cjs"
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log-read-guard.cjs"
+          }
+        ]
+      },
+      {
+        "matcher": "WebFetch|webReader|mcp__web_reader__webReader",
         "hooks": [
           {
             "type": "command",
@@ -14,7 +32,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Read|WebSearch|mcp__.*",
+        "matcher": "mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_batch_execute|mcp__plugin_context-mode_context-mode__ctx_fetch_and_index",
         "hooks": [
           {
             "type": "command",
