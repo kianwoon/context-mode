@@ -48,7 +48,10 @@ try {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           additionalContext:
-            "Read is correct for files you intend to Edit. For analysis/exploration, use execute(language, code) instead."
+            "Read is ONLY for files you intend to Edit. For analysis/exploration:\n" +
+            "- execute({language: 'javascript', code: 'const data = JSON.parse(fs.readFileSync(path)); console.log(Object.keys(data))'})\n" +
+            "- execute({language: 'shell', code: 'head -50 file.log | grep ERROR'})\n" +
+            "- batch_execute({commands: [{label:'file', command:'cat file.csv | head -20'}], queries: ['summary']})"
         }
       }));
     } catch {
