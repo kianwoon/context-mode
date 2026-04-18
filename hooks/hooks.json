@@ -32,7 +32,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp__plugin_context-mode_context-mode__ctx_execute|mcp__plugin_context-mode_context-mode__ctx_batch_execute|mcp__plugin_context-mode_context-mode__ctx_fetch_and_index",
+        "matcher": "mcp__plugin_context-mode_context-mode__execute|mcp__plugin_context-mode_context-mode__batch_execute|mcp__plugin_context-mode_context-mode__fetch_and_index",
         "hooks": [
           {
             "type": "command",
