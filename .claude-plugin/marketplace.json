@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "context-mode",
-      "description": "Sandboxed code execution + FTS5 knowledge base. 3 MCP tools: execute, batch_execute, search. Zero hooks, zero build step.",
+      "description": "Sandboxed code execution + FTS5 knowledge base. 4 MCP tools: execute, batch_execute, search, fetch_and_index. Context-preserving hooks block raw HTML and high-output bash.",
       "category": "development",
       "source": "./"
     }
