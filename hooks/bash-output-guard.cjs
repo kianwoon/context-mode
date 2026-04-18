@@ -91,7 +91,10 @@ try {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           additionalContext:
-            "Use batch_execute for multi-command research. Use execute for data processing. Bash for git/mkdir/rm/mv/short commands only."
+            "Bash is for git/mkdir/rm/mv/short commands only. For everything else:\n" +
+            "- Research: batch_execute({commands: [{label, command}], queries: ['search terms']})\n" +
+            "- Data: execute({language: 'shell', code: 'git log --oneline -20'}) or execute({language: 'javascript', code: '...'})\n" +
+            "- Web: fetch_and_index({url, queries: ['terms']}) instead of WebFetch"
         }
       }));
     } catch {

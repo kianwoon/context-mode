@@ -1,32 +1,19 @@
 # context-mode
 
-[![Version](https://img.shields.io/badge/version-2.2.0-blue)](https://github.com/kianwoon/context-mode/releases)
-[![License](https://img.shields.io/badge/license-Elastic--2.0-green)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
-[![CI](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml/badge.svg)](https://github.com/kianwoon/context-mode/actions/workflows/ci.yml)
-[![Security](https://img.shields.io/badge/security-OpenSSF%20Scorecard-brightgreen)](https://securityscorecard.dev/#/github.com/kianwoon/context-mode)
+Sandboxed code execution + FTS5 knowledge base for Claude Code.
 
-Sandboxed code execution + FTS5 knowledge base for Claude Code. 4 MCP tools, 3 auto-enforcing hooks.
+## TL;DR
 
-<img width="1694" height="939" alt="Screenshot 2026-04-16 at 4 10 26 AM" src="https://github.com/user-attachments/assets/be122d15-3483-4807-b0c3-98458046bf00" />
+Write code. `console.log()` only the answer. Raw output stays in a sandbox — out of your context window.
 
-## Why
+| Tool | Use when |
+|------|----------|
+| `execute(language, code)` | Data processing — analyze, filter, transform, count |
+| `batch_execute(commands, queries)` | Research — explore codebase, index, search |
+| `search(queries, source?)` | Follow-up queries on indexed content |
+| `fetch_and_index(url, queries?)` | Web research — fetch, index, query |
 
-Every LLM has a finite context window — whether it's 200K, 128K, or 32K tokens. Every token spent on raw tool output is a token NOT available for reasoning.
-
-**The problem:** Reading files, running commands, and searching codebases floods your context window with raw data. A typical research session (explore structure, find routes, debug errors) can burn through 135K tokens — most of your window — before the LLM even starts thinking.
-
-**The fix:** context-mode keeps raw data in a sandbox. Write code that does the work, `console.log()` only the answer. The raw output stays out of context.
-
-| Scenario | Raw Tokens | context-mode | Savings |
-|----------|-----------|-------------|---------|
-| Find all API routes | 15,000 | 800 | 95% |
-| Analyze test failures | 35,000 | 1,200 | 97% |
-| Research codebase structure | 60,000 | 2,500 | 96% |
-| Debug a production error | 25,000 | 1,000 | 96% |
-| **Typical session** | **135,000** | **5,500** | **~96%** |
-
-That's 129,500 tokens freed for reasoning instead of holding raw data.
+**Hooks auto-enforce the pattern.** If you reach for the wrong tool, Claude redirects you with examples.
 
 ## Install
 
@@ -34,68 +21,126 @@ That's 129,500 tokens freed for reasoning instead of holding raw data.
 claude plugin add kianwoon/context-mode
 ```
 
-Requires Node.js 22+ (uses built-in `node:sqlite`). No build step, no native dependencies.
+Requires Node.js 22+.
+
+## Quick Start
+
+### Instead of `Bash` for research:
+
+❌ **Before (raw output floods context):**
+```
+Bash: git log
+Bash: git diff
+Bash: git branch -a
+```
+
+✓ **After (indexed + searchable):**
+```
+batch_execute({
+  commands: [
+    {label: "log", command: "git log --oneline -20"},
+    {label: "diff", command: "git diff --stat"},
+    {label: "branches", command: "git branch -a | head -30"}
+  ],
+  queries: ["what changed in the last commit", "any pending migrations"]
+})
+```
+
+### Instead of `Read` on data files:
+
+❌ **Before (raw file floods context):**
+```
+Read: results.csv    # 50MB CSV
+Read: app.log        # unbounded log
+```
+
+✓ **After (only the answer enters context):**
+```
+execute({
+  language: "javascript",
+  code: `
+    const fs = require('fs');
+    const lines = fs.readFileSync('results.csv', 'utf8').split('\\n').filter(l => l.includes('ERROR'));
+    console.log(lines.length);
+  `
+})
+```
+
+### Instead of `WebFetch`:
+
+❌ **Before (raw HTML floods context — 5K-50K+ tokens):**
+```
+WebFetch: https://docs.example.com/api
+```
+
+✓ **After (indexed + searchable):**
+```
+fetch_and_index({url: "https://docs.example.com/api", queries: ["rate limit", "auth"]})
+```
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `execute(language, code, timeout?)` | Run code in 11 languages via sandboxed subprocess |
-| `batch_execute(commands, queries, timeout?)` | Run shell commands, auto-index output, search |
-| `search(queries, limit?)` | BM25 search over indexed content |
-| `fetch_and_index(url, queries?, timeout?)` | Fetch URL, convert HTML→markdown, index, return summary |
+### execute(language, code, timeout?)
+Runs code in 11 languages. Only `console.log()` output returns — everything else stays sandboxed.
 
-## How it works
+```javascript
+execute({language: "javascript", code: `
+  const data = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  console.log(Object.keys(data.dependencies).join(', '));
+`})
+```
 
-1. **execute** — Write code that processes data. Only `console.log()` output enters context.
-2. **batch_execute** — Run multiple shell commands, auto-index output into FTS5, search for what you need. One call replaces 30+ tool calls.
-3. **search** — BM25 search over previously indexed content. One call, many queries.
-4. **fetch_and_index** — Fetch a URL, convert HTML to markdown, index into FTS5, return structured summary. Follow-up via `search()`.
+### batch_execute(commands, queries?, timeout?)
+Runs shell commands, auto-indexes output into FTS5, runs BM25 search, returns ranked results.
 
-**Auto-enforcing hooks** block `Read` on data-heavy files (.log, .csv, .xml, .sql, .json >100KB), `WebFetch`/`webReader` (raw HTML dumps), `WebSearch` (US-only, unreliable), and high-output `Bash` commands (bare `git log`, `git diff`, `git show`, `git blame`, `git reflog`, `git stash list`, `git branch -a`, broad `find`) — redirecting to the tools above.
+```javascript
+batch_execute({
+  commands: [
+    {label: "src", command: "find src -name '*.ts' | head -50"},
+    {label: "tests", command: "find . -name '*.test.ts'"},
+  ],
+  queries: ["auth middleware", "API routes"]
+})
+```
 
-**When to use what:**
-- `Read` → files you want to **edit** (need exact content for Edit tool)
-- `execute` → data you want to **analyze** (count, filter, transform, parse)
-- `batch_execute` → codebases you want to **research** (explore, index, query)
-- `fetch_and_index` → web pages you want to **read** (fetch, index, query)
-- `search` → follow-up queries on indexed content
+### search(queries, limit?)
+BM25 search over previously indexed content. Works across all `batch_execute` and `fetch_and_index` output in the session.
+
+```javascript
+search({queries: ["where is the login handler", "what does the auth middleware do"]})
+```
+
+### fetch_and_index(url, queries?, timeout?)
+Fetches a URL, converts HTML→markdown, indexes into FTS5, returns structured summary + search results.
+
+```javascript
+fetch_and_index({url: "https://github.com/kianwoon/context-mode", queries: ["features", "install"]})
+```
+
+## How hooks work
+
+Hooks auto-enforce the pattern — you don't need to memorize when to use what.
+
+| Trigger | What happens |
+|---------|---------------|
+| `Bash` with dangerous command (bare `git log`, `git diff`, etc.) | **Denied** with redirect to `execute`/`batch_execute` example |
+| First `Bash` call in session (safe command) | **Guidance** with pattern examples (once/session) |
+| `Read` on data file (.log, .csv, .json >100KB) | **Denied** with redirect to `execute` example |
+| First `Read` call in session (safe file) | **Guidance** with pattern examples (once/session) |
+| `WebFetch` / `webReader` | **Denied** with redirect to `fetch_and_index` |
+| `batch_execute` / `execute` / `fetch_and_index` with large output | **Indexed** to FTS5, output replaced with search summary |
+
+## Data lifecycle
+
+Plugin self-manages — no config needed.
+
+- **Per-session DB**: `context-mode-{pid}.db` in tmpdir, deleted on session end
+- **Source dedup**: re-indexing same label atomically replaces old content
+- **TTL eviction**: entries older than 60 minutes evicted on each insert
+- **Orphan sweep**: stale DBs from dead PIDs cleaned up on start
 
 ## Build
 
 ```bash
-npm run build
+npm run build   # outputs build/index.js (~607KB, committed to repo)
 ```
-
-Outputs `build/index.js` (~607KB single bundle). The bundle is committed to the repo for zero-build install.
-
-## Architecture
-
-```
-src/index.ts     — MCP server entry (~350 lines, 4 tools)
-src/executor.ts  — PolyglotExecutor: 11 languages, process group kill
-src/store.ts     — FTS5/BM25 content store (SQLite)
-src/db-base.ts   — Multi-backend SQLite: node:sqlite (primary) → better-sqlite3 (fallback)
-src/runtime.ts   — Runtime detection
-src/types.ts     — Shared types
-src/truncate.ts  — Output truncation
-hooks/           — PreToolUse guards (auto-enforce usage patterns)
-```
-
-## Data lifecycle
-
-No user intervention needed — the plugin self-manages:
-
-| Mechanism | When | What |
-|-----------|------|------|
-| **Per-session DB** | On start | Each session gets its own temp SQLite DB (`context-mode-{pid}.db`). No cross-session accumulation. |
-| **Source dedup** | On index | Re-indexing the same source/label atomically replaces old content — prevents stale build-fix-build buildup. |
-| **TTL eviction** | On index | Entries older than 60 minutes are evicted before each new insert. |
-| **Session cleanup** | On exit | DB files + WAL/SHM are deleted when the process exits. |
-| **Orphan sweep** | On start | Stale DBs from dead PIDs or orphaned sessions (untouched >4hrs) are cleaned up at launch. |
-
-Result: the knowledge base stays lean automatically. No config, no cron, no manual cleanup.
-
-## What's not here (by design)
-
-No adapters, no session DB, no CLI, no analytics. PreToolUse hooks auto-enforce best practices.
