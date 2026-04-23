@@ -87,7 +87,7 @@ server.registerTool(
       const output = result.exitCode === 0
         ? result.stdout || "(no output)"
         : `Exit code: ${result.exitCode}\n\n${result.stdout}${result.stderr ? `\n\nstderr:\n${result.stderr}` : ""}`;
-      return textResult(truncateJSON(output, MAX_RESPONSE_BYTES, 0));
+      return textResult(truncateHeadTail(output, MAX_RESPONSE_BYTES, 0, 0));
     } catch (err) {
       return textResult(
         `Execution error: ${err instanceof Error ? err.message : String(err)}`,
