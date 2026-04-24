@@ -1,5 +1,5 @@
 {
-  "name": "context-mode",
+  "name": "@kianwoon/context-mode",
   "version": "2.5.0",
   "type": "module",
   "description": "Sandboxed code execution + FTS5 knowledge base. 4 MCP tools, 2 auto-enforcing hooks.",
