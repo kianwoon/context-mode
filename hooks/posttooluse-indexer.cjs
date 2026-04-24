@@ -60,9 +60,37 @@ try {
   if (byteSize < THRESHOLD) process.exit(0);
 
   // Above threshold — index into FTS5 via direct SQLite access
-  const parentPid = process.ppid;
+  // The MCP server creates context-mode-<its_pid>.db. The hook is a sibling of the
+  // MCP server (both children of the Claude Code process). We need to find the MCP
+  // server's PID so we write to the same DB that search() reads from.
   const hookDir = dirname(fs.realpathSync(process.argv[1] || __filename));
-  const dbPath = join(tmpdir(), `context-mode-${parentPid}.db`);
+  const tmp = tmpdir();
+  const claudePid = process.ppid;
+
+  // Find the MCP server PID: it's a child of claudePid running context-mode/build/index.js
+  let mcpPid = null;
+  try {
+    const { execFileSync } = require('child_process');
+    // macOS-compatible: list all processes, filter by ppid + command
+    const psOut = execFileSync('ps', ['-o', 'pid=,ppid=,command='], {
+      timeout: 2000,
+      encoding: 'utf8',
+    });
+    for (const line of psOut.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[0];
+      const ppid = parts[1];
+      const cmd = parts.slice(2).join(' ');
+      if (ppid === String(claudePid) && cmd.includes('context-mode') && cmd.includes('build/index.js')) {
+        mcpPid = parseInt(pid, 10);
+        break;
+      }
+    }
+  } catch { /* ps failed — no children or command not available */ }
+
+  const dbPath = mcpPid
+    ? join(tmp, `context-mode-${mcpPid}.db`)
+    : join(tmp, `context-mode-${claudePid}.db`);
 
   // Simple line-based chunking
   const lines = text.split('\n');
