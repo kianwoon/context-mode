@@ -225,13 +225,15 @@ server.registerTool(
       ),
       limit: z.coerce.number().optional().default(5)
         .describe("Results per query (default: 5)"),
+      source: z.string().optional()
+        .describe("Filter by source label (e.g. 'hook-plugin_context-mode_context-mode__execut')"),
     },
   },
-  async ({ queries, limit }) => {
+  async ({ queries, limit, source }) => {
     try {
       const results: string[] = [];
       for (const q of queries) {
-        const matches = store.search(q, limit);
+        const matches = store.search(q, limit, source);
         if (matches.length > 0) {
           results.push(`### ${q}`);
           for (const m of matches) {
