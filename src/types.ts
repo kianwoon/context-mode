@@ -30,6 +30,8 @@ export interface IndexResult {
 
 /** A single search result from FTS5 BM25-ranked lookup. */
 export interface SearchResult {
+  chunkId?: number;
+  sourceId?: number;
   title: string;
   content: string;
   source: string;

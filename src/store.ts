@@ -11,9 +11,19 @@
 import type { Database as DatabaseInstance } from "better-sqlite3";
 import { loadDatabase, applyWALPragmas, closeDB, cleanOrphanedWALFiles, withRetry, deleteDBFiles, isSQLiteCorruptionError } from "./db-base.js";
 import type { PreparedStatement } from "./db-base.js";
-import { readFileSync, readdirSync, unlinkSync, existsSync, statSync } from "node:fs";
+import { readFileSync, unlinkSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  STOPWORDS,
+  findAllPositions,
+  findMinSpan,
+  levenshtein,
+  maxEditDistance,
+  meaningfulQueryTerms,
+  sanitizeQuery,
+  sanitizeTrigramQuery,
+} from "./search-utils.js";
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -28,6 +38,8 @@ interface Chunk {
 type SourceMatchMode = "like" | "exact";
 
 type SearchRow = {
+  chunk_id: number;
+  source_id: number;
   title: string;
   content: string;
   content_type: string;
@@ -38,109 +50,11 @@ type SearchRow = {
 
 import type { IndexResult, SearchResult, StoreStats } from "./types.js";
 export type { IndexResult, SearchResult, StoreStats } from "./types.js";
+export { cleanupStaleContentDBs, cleanupStaleDBs } from "./store-cleanup.js";
 
 // ─────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────
-
-const STOPWORDS = new Set([
-  "the", "and", "for", "are", "but", "not", "you", "all", "can", "had",
-  "her", "was", "one", "our", "out", "has", "his", "how", "its", "may",
-  "new", "now", "old", "see", "way", "who", "did", "get", "got", "let",
-  "say", "she", "too", "use", "will", "with", "this", "that", "from",
-  "they", "been", "have", "many", "some", "them", "than", "each", "make",
-  "like", "just", "over", "such", "take", "into", "year", "your", "good",
-  "could", "would", "about", "which", "their", "there", "other", "after",
-  "should", "through", "also", "more", "most", "only", "very", "when",
-  "what", "then", "these", "those", "being", "does", "done", "both",
-  "same", "still", "while", "where", "here", "were", "much",
-  // Common in code/changelogs
-  "update", "updates", "updated", "deps", "dev", "tests", "test",
-  "add", "added", "fix", "fixed", "run", "running", "using",
-]);
-
-// ─────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────
-
-/**
- * Remove case-insensitive duplicate tokens while preserving the first
- * occurrence's original casing. FTS5's unicode61 tokenizer lowercases on
- * both sides, so `"Error" OR "error"` produces no extra recall — just
- * redundant index lookups. Dedup keeps the compiled query minimal.
- */
-function dedupeTokens(tokens: string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of tokens) {
-    const key = t.toLowerCase();
-    if (!seen.has(key)) {
-      seen.add(key);
-      out.push(t);
-    }
-  }
-  return out;
-}
-
-export function sanitizeQuery(query: string, mode: "AND" | "OR" = "AND"): string {
-  const words = dedupeTokens(
-    query
-      .replace(/['"(){}[\]*:^~]/g, " ")
-      .split(/\s+/)
-      .filter(
-        (w) =>
-          w.length > 0 &&
-          !["AND", "OR", "NOT", "NEAR"].includes(w.toUpperCase()),
-      ),
-  );
-
-  if (words.length === 0) return '""';
-
-  // Filter stopwords to improve BM25 ranking — common terms like "update",
-  // "test", "fix" appear everywhere and dilute relevance scoring.
-  // Fall back to unfiltered words if ALL terms are stopwords.
-  const meaningful = words.filter((w) => !STOPWORDS.has(w.toLowerCase()));
-  const final = meaningful.length > 0 ? meaningful : words;
-
-  return final.map((w) => `"${w}"`).join(mode === "OR" ? " OR " : " ");
-}
-
-export function sanitizeTrigramQuery(query: string, mode: "AND" | "OR" = "AND"): string {
-  const cleaned = query.replace(/["'(){}[\]*:^~]/g, "").trim();
-  if (cleaned.length < 3) return "";
-  const words = dedupeTokens(
-    cleaned.split(/\s+/).filter((w) => w.length >= 3),
-  );
-  if (words.length === 0) return "";
-
-  const meaningful = words.filter((w) => !STOPWORDS.has(w.toLowerCase()));
-  const final = meaningful.length > 0 ? meaningful : words;
-
-  return final.map((w) => `"${w}"`).join(mode === "OR" ? " OR " : " ");
-}
-
-function levenshtein(a: string, b: string): number {
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const curr = [i];
-    for (let j = 1; j <= b.length; j++) {
-      curr[j] =
-        a[i - 1] === b[j - 1]
-          ? prev[j - 1]
-          : 1 + Math.min(prev[j], curr[j - 1], prev[j - 1]);
-    }
-    prev = curr;
-  }
-  return prev[b.length];
-}
-
-function maxEditDistance(wordLength: number): number {
-  if (wordLength <= 4) return 1;
-  if (wordLength <= 12) return 2;
-  return 3;
-}
 
 // Oversized chunks (e.g., a 50KB section between two headings) hurt BM25
 // length normalization and produce unwieldy search results. Split at paragraph
@@ -150,150 +64,6 @@ const MAX_CHUNK_BYTES = 4096;
 // ─────────────────────────────────────────────────────────
 // ContentStore
 // ─────────────────────────────────────────────────────────
-
-/**
- * Remove stale DB files from previous sessions.
- *
- * Two cleanup strategies:
- * 1. Dead PID — process no longer exists → clean immediately
- * 2. Orphan PID — process alive but DB untouched for >4hrs → likely an
- *    orphaned MCP server from a crashed Claude session. The 4hr threshold
- *    balances catching orphans against affecting legitimately idle sessions.
- */
-export function cleanupStaleDBs(): number {
-  const dir = tmpdir();
-  const STALE_MS = 4 * 60 * 60 * 1000; // 4 hours
-  let cleaned = 0;
-  try {
-    const files = readdirSync(dir);
-    for (const file of files) {
-      const match = file.match(/^context-mode-(\d+)\.db$/);
-      if (!match) continue;
-      const pid = parseInt(match[1], 10);
-      if (pid === process.pid) continue;
-
-      let shouldClean = false;
-      try {
-        process.kill(pid, 0);
-        // PID is alive — check if DB is stale (orphan detection)
-        try {
-          const mtime = statSync(join(dir, file)).mtimeMs;
-          if (Date.now() - mtime > STALE_MS) shouldClean = true;
-        } catch { /* stat failed — skip */ }
-      } catch {
-        // PID is dead — safe to clean
-        shouldClean = true;
-      }
-
-      if (shouldClean) {
-        const base = join(dir, file);
-        for (const suffix of ["", "-wal", "-shm"]) {
-          try { unlinkSync(base + suffix); } catch { /* ignore */ }
-        }
-        cleaned++;
-      }
-    }
-  } catch { /* ignore readdir errors */ }
-  return cleaned;
-}
-
-/**
- * Clean up stale per-project content store DBs older than maxAgeDays.
- * Scans the given directory for *.db files and checks mtime.
- * Also detects zombie processes holding WAL locks — if a WAL file exists
- * but the owning PID is dead, the DB files are cleaned up regardless of age.
- */
-export function cleanupStaleContentDBs(contentDir: string, maxAgeDays: number): number {
-  let cleaned = 0;
-  try {
-    if (!existsSync(contentDir)) return 0;
-    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-    const files = readdirSync(contentDir).filter(f => f.endsWith(".db"));
-    for (const file of files) {
-      try {
-        const filePath = join(contentDir, file);
-        const mtime = statSync(filePath).mtimeMs;
-        let shouldClean = mtime < cutoff;
-
-        // Detect zombie processes holding WAL locks:
-        // If a WAL file exists, try to read the WAL header to extract the PID.
-        // WAL files from dead processes can block new connections.
-        if (!shouldClean) {
-          const walPath = filePath + "-wal";
-          if (existsSync(walPath)) {
-            try {
-              const walStat = statSync(walPath);
-              // If WAL file is non-empty and DB hasn't been modified in >1 hour,
-              // the owning process may be dead — check via mtime staleness
-              if (walStat.size > 0 && (Date.now() - walStat.mtimeMs) > 3600_000) {
-                shouldClean = true;
-              }
-            } catch { /* ignore WAL check errors */ }
-          }
-        }
-
-        if (shouldClean) {
-          for (const suffix of ["", "-wal", "-shm"]) {
-            try { unlinkSync(filePath + suffix); } catch { /* ignore */ }
-          }
-          cleaned++;
-        }
-      } catch { /* ignore per-file errors */ }
-    }
-  } catch { /* ignore readdir errors */ }
-  return cleaned;
-}
-
-// ── Proximity helpers (pure functions) ──
-
-/** Find all positions of a term in text. */
-function findAllPositions(text: string, term: string): number[] {
-  const positions: number[] = [];
-  let idx = text.indexOf(term);
-  while (idx !== -1) {
-    positions.push(idx);
-    idx = text.indexOf(term, idx + 1);
-  }
-  return positions;
-}
-
-/**
- * Find minimum span (window) covering at least one position from each list.
- * Uses a sweep-line approach: advance the pointer at the current minimum.
- */
-function findMinSpan(positionLists: number[][]): number {
-  if (positionLists.length === 0) return Infinity;
-  if (positionLists.length === 1) return 0;
-
-  const sorted = positionLists.map((p) => [...p].sort((a, b) => a - b));
-  const ptrs = new Array(sorted.length).fill(0);
-  let minSpan = Infinity;
-
-  while (true) {
-    let curMin = Infinity;
-    let curMax = -Infinity;
-    let minIdx = 0;
-
-    for (let i = 0; i < sorted.length; i++) {
-      const val = sorted[i][ptrs[i]];
-      if (val < curMin) {
-        curMin = val;
-        minIdx = i;
-      }
-      if (val > curMax) {
-        curMax = val;
-      }
-    }
-
-    const span = curMax - curMin;
-    if (span < minSpan) minSpan = span;
-
-    ptrs[minIdx]++;
-    if (ptrs[minIdx] >= sorted[minIdx].length) break;
-  }
-
-  return minSpan;
-}
 
 export class ContentStore {
   #db: DatabaseInstance;
@@ -336,6 +106,7 @@ export class ContentStore {
   #stmtChunksBySource!: PreparedStatement;
   #stmtSourceChunkCount!: PreparedStatement;
   #stmtChunkContent!: PreparedStatement;
+  #stmtChunkById!: PreparedStatement;
   #stmtStats!: PreparedStatement;
   #stmtSourceMeta!: PreparedStatement;
 
@@ -343,6 +114,11 @@ export class ContentStore {
   #stmtCleanupChunks!: PreparedStatement;
   #stmtCleanupChunksTrigram!: PreparedStatement;
   #stmtCleanupSources!: PreparedStatement;
+
+  // Eviction path (minute-based TTL) — cached to avoid recompiling on every index()
+  #stmtEvictChunks!: PreparedStatement;
+  #stmtEvictChunksTrigram!: PreparedStatement;
+  #stmtEvictOrphanSources!: PreparedStatement;
 
   // FTS5 optimization: track inserts and optimize periodically to defragment
   // the index. FTS5 b-trees fragment over many insert/delete cycles, degrading
@@ -468,6 +244,8 @@ export class ContentStore {
     // Search path (hot)
     this.#stmtSearchPorter = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -482,6 +260,8 @@ export class ContentStore {
     `);
     this.#stmtSearchPorterFiltered = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -496,6 +276,8 @@ export class ContentStore {
     `);
     this.#stmtSearchPorterExact = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -510,6 +292,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigram = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -524,6 +308,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigramFiltered = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -538,6 +324,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigramExact = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -554,6 +342,8 @@ export class ContentStore {
     // Content-type filtered variants
     this.#stmtSearchPorterContentType = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -568,6 +358,8 @@ export class ContentStore {
     `);
     this.#stmtSearchPorterFilteredContentType = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -582,6 +374,8 @@ export class ContentStore {
     `);
     this.#stmtSearchPorterExactContentType = this.#db.prepare(`
       SELECT
+        chunks.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks.title,
         chunks.content,
         chunks.content_type,
@@ -596,6 +390,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigramContentType = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -610,6 +406,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigramFilteredContentType = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -624,6 +422,8 @@ export class ContentStore {
     `);
     this.#stmtSearchTrigramExactContentType = this.#db.prepare(`
       SELECT
+        chunks_trigram.rowid AS chunk_id,
+        sources.id AS source_id,
         chunks_trigram.title,
         chunks_trigram.content,
         chunks_trigram.content_type,
@@ -647,7 +447,7 @@ export class ContentStore {
       "SELECT label, chunk_count as chunkCount FROM sources ORDER BY id DESC",
     );
     this.#stmtChunksBySource = this.#db.prepare(
-      `SELECT c.title, c.content, c.content_type, s.label
+      `SELECT c.rowid AS chunk_id, c.title, c.content, c.content_type, s.id AS source_id, s.label
        FROM chunks c
        JOIN sources s ON s.id = c.source_id
        WHERE c.source_id = ?
@@ -658,6 +458,12 @@ export class ContentStore {
     );
     this.#stmtChunkContent = this.#db.prepare(
       "SELECT content FROM chunks WHERE source_id = ?",
+    );
+    this.#stmtChunkById = this.#db.prepare(
+      `SELECT c.rowid AS chunk_id, c.title, c.content, c.content_type, s.id AS source_id, s.label
+       FROM chunks c
+       JOIN sources s ON s.id = c.source_id
+       WHERE c.rowid = ?`,
     );
     this.#stmtSourceMeta = this.#db.prepare(
       "SELECT label, chunk_count, code_chunk_count, indexed_at FROM sources WHERE label = ?",
@@ -678,6 +484,25 @@ export class ContentStore {
     );
     this.#stmtCleanupSources = this.#db.prepare(
       "DELETE FROM sources WHERE datetime(indexed_at) < datetime('now', '-' || ? || ' days')",
+    );
+
+    // Eviction path — minute-based TTL, cached to avoid recompiling on every index()
+    this.#stmtEvictChunks = this.#db.prepare(
+      `DELETE FROM chunks WHERE source_id IN (
+        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
+      )`,
+    );
+    this.#stmtEvictChunksTrigram = this.#db.prepare(
+      `DELETE FROM chunks_trigram WHERE source_id IN (
+        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
+      )`,
+    );
+    this.#stmtEvictOrphanSources = this.#db.prepare(
+      `DELETE FROM sources WHERE id NOT IN (
+        SELECT DISTINCT source_id FROM chunks
+      ) AND id NOT IN (
+        SELECT DISTINCT source_id FROM chunks_trigram
+      )`,
     );
   }
 
@@ -823,6 +648,8 @@ export class ContentStore {
 
   #mapSearchRows(rows: SearchRow[]): SearchResult[] {
     return rows.map((r) => ({
+      chunkId: r.chunk_id,
+      sourceId: r.source_id,
       title: r.title,
       content: r.content,
       source: r.label,
@@ -840,7 +667,7 @@ export class ContentStore {
     query: string,
     limit: number = 3,
     source?: string,
-    mode: "AND" | "OR" = "AND",
+    mode: "AND" | "OR" = "OR",
     contentType?: "code" | "prose",
     sourceMatchMode: SourceMatchMode = "like",
   ): SearchResult[] {
@@ -876,7 +703,7 @@ export class ContentStore {
     query: string,
     limit: number = 3,
     source?: string,
-    mode: "AND" | "OR" = "AND",
+    mode: "AND" | "OR" = "OR",
     contentType?: "code" | "prose",
     sourceMatchMode: SourceMatchMode = "like",
   ): SearchResult[] {
@@ -972,7 +799,7 @@ export class ContentStore {
     const trigramResults = this.searchTrigram(query, fetchLimit, source, "OR", contentType, sourceMatchMode);
 
     const scoreMap = new Map<string, { result: SearchResult; score: number }>();
-    const key = (r: SearchResult) => `${r.source}::${r.title}`;
+    const key = (r: SearchResult) => `${r.source}::${r.title}::${r.content.slice(0, 100)}`;
 
     for (const [i, r] of porterResults.entries()) {
       const k = key(r);
@@ -1053,21 +880,31 @@ export class ContentStore {
     contentType?: "code" | "prose",
     sourceMatchMode: SourceMatchMode = "like",
   ): SearchResult[] {
-    // Step 1: RRF fusion (porter OR + trigram OR → merge)
+    // Step 1: high-precision AND search. Only fall back to broad OR fusion if
+    // all meaningful terms cannot be found together.
+    const strictPorter = this.search(query, limit, source, "AND", contentType, sourceMatchMode);
+    if (strictPorter.length > 0) {
+      const reranked = this.#applyProximityReranking(strictPorter, query);
+      return reranked.map((r) => ({ ...r, matchLayer: "porter" as const }));
+    }
+
+    const strictTrigram = this.searchTrigram(query, limit, source, "AND", contentType, sourceMatchMode);
+    if (strictTrigram.length > 0) {
+      const reranked = this.#applyProximityReranking(strictTrigram, query);
+      return reranked.map((r) => ({ ...r, matchLayer: "trigram" as const }));
+    }
+
+    // Step 2: RRF fusion (porter OR + trigram OR → merge)
     const rrfResults = this.#rrfSearch(query, limit, source, contentType, sourceMatchMode);
     if (rrfResults.length > 0) {
       const reranked = this.#applyProximityReranking(rrfResults, query);
       return reranked.map((r) => ({ ...r, matchLayer: "rrf" as const }));
     }
 
-    // Step 2: Fuzzy correction → RRF re-run
+    // Step 3: Fuzzy correction → RRF re-run
     // Skip stopwords — they'll be filtered by sanitizeQuery anyway, and each
     // fuzzyCorrect call hits the vocab DB + runs levenshtein comparisons.
-    const words = query
-      .toLowerCase()
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+    const words = meaningfulQueryTerms(query, 3);
     const original = words.join(" ");
     const correctedWords = words.map((w) => this.fuzzyCorrect(w) ?? w);
     const correctedQuery = correctedWords.join(" ");
@@ -1104,6 +941,8 @@ export class ContentStore {
    */
   getChunksBySource(sourceId: number): SearchResult[] {
     const rows = this.#stmtChunksBySource.all(sourceId) as Array<{
+      chunk_id: number;
+      source_id: number;
       title: string;
       content: string;
       content_type: string;
@@ -1111,12 +950,35 @@ export class ContentStore {
     }>;
 
     return rows.map((r) => ({
+      chunkId: r.chunk_id,
+      sourceId: r.source_id,
       title: r.title,
       content: r.content,
       source: r.label,
       rank: 0,
       contentType: r.content_type as "code" | "prose",
     }));
+  }
+
+  getChunkById(chunkId: number): SearchResult | null {
+    const row = this.#stmtChunkById.get(chunkId) as {
+      chunk_id: number;
+      source_id: number;
+      title: string;
+      content: string;
+      content_type: string;
+      label: string;
+    } | undefined;
+    if (!row) return null;
+    return {
+      chunkId: row.chunk_id,
+      sourceId: row.source_id,
+      title: row.title,
+      content: row.content,
+      source: row.label,
+      rank: 0,
+      contentType: row.content_type as "code" | "prose",
+    };
   }
 
   // ── Vocabulary ──
@@ -1191,29 +1053,11 @@ export class ContentStore {
    */
   evictStaleEntries(): void {
     const cutoff = `-${this.#TTL_MINUTES} minutes`;
-    const deleteChunks = this.#db.prepare(
-      `DELETE FROM chunks WHERE source_id IN (
-        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
-      )`,
-    );
-    const deleteChunksTrigram = this.#db.prepare(
-      `DELETE FROM chunks_trigram WHERE source_id IN (
-        SELECT id FROM sources WHERE datetime(indexed_at) < datetime('now', ?)
-      )`,
-    );
-    const deleteOrphanSources = this.#db.prepare(
-      `DELETE FROM sources WHERE id NOT IN (
-        SELECT DISTINCT source_id FROM chunks
-      ) AND id NOT IN (
-        SELECT DISTINCT source_id FROM chunks_trigram
-      )`,
-    );
-    const evict = this.#db.transaction(() => {
-      deleteChunks.run(cutoff);
-      deleteChunksTrigram.run(cutoff);
-      deleteOrphanSources.run();
-    });
-    evict();
+    withRetry(() => this.#db.transaction(() => {
+      this.#stmtEvictChunks.run(cutoff);
+      this.#stmtEvictChunksTrigram.run(cutoff);
+      this.#stmtEvictOrphanSources.run();
+    })());
   }
 
   /**
@@ -1375,7 +1219,7 @@ export class ContentStore {
 
         while (i < lines.length) {
           codeLines.push(lines[i]);
-          if (lines[i].startsWith(fence) && lines[i].trim() === fence) {
+          if (lines[i].trimEnd() === fence) {
             i++;
             break;
           }

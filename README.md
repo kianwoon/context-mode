@@ -10,7 +10,8 @@ Write code. `console.log()` only the answer. Raw output stays in a sandbox — o
 |------|----------|
 | `execute(language, code)` | Data processing — analyze, filter, transform, count |
 | `batch_execute(commands, queries)` | Research — explore codebase, index, search |
-| `search(queries, source?)` | Follow-up queries on indexed content |
+| `search(queries, source?)` | Follow-up queries on indexed content; returns snippets by default |
+| `get_chunk(chunkId)` | Expand one exact indexed chunk after a snippet proves relevance |
 | `fetch_and_index(url, queries?)` | Web research — fetch, index, query |
 
 **Hooks auto-enforce the pattern.** If you reach for the wrong tool, Claude redirects you with examples.
@@ -21,7 +22,7 @@ Write code. `console.log()` only the answer. Raw output stays in a sandbox — o
 claude plugin add kianwoon/context-mode
 ```
 
-Requires Node.js 22+.
+Requires Node.js 18+.
 
 ## Quick Start
 
@@ -90,8 +91,8 @@ execute({language: "javascript", code: `
 `})
 ```
 
-### batch_execute(commands, queries?, timeout?)
-Runs shell commands, auto-indexes output into FTS5, runs BM25 search, returns ranked results.
+### batch_execute(commands, queries?, outputMode?, includeInventory?, timeout?)
+Runs shell commands, auto-indexes output into FTS5, runs search, and returns ranked evidence snippets by default.
 
 ```javascript
 batch_execute({
@@ -103,15 +104,22 @@ batch_execute({
 })
 ```
 
-### search(queries, limit?)
-BM25 search over previously indexed content. Works across all `batch_execute` and `fetch_and_index` output in the session.
+### search(queries, limit?, outputMode?)
+Search over previously indexed content. Works across all `batch_execute` and `fetch_and_index` output in the session. Defaults to evidence snippets with `chunkId`; set `outputMode: "full"` only when you need complete chunks immediately.
 
 ```javascript
 search({queries: ["where is the login handler", "what does the auth middleware do"]})
 ```
 
-### fetch_and_index(url, queries?, timeout?)
-Fetches a URL, converts HTML→markdown, indexes into FTS5, returns structured summary + search results.
+### get_chunk(chunkId)
+Expands one exact chunk returned by `search`, `batch_execute`, or `fetch_and_index`.
+
+```javascript
+get_chunk({chunkId: 42})
+```
+
+### fetch_and_index(url, queries?, outputMode?, includeInventory?, includeLinks?, timeout?)
+Fetches a URL, converts HTML→markdown, indexes into FTS5, returns a compact summary and optional search snippets. Section inventory and links are opt-in.
 
 ```javascript
 fetch_and_index({url: "https://github.com/kianwoon/context-mode", queries: ["features", "install"]})

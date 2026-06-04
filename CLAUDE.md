@@ -14,7 +14,7 @@ No test framework is configured. The `better-sqlite3` dependency is externalized
 
 ## Architecture
 
-This is a Claude Code plugin (v2.2.0) that provides 4 MCP tools and 4 auto-enforcing hooks. The goal: keep raw tool output out of Claude's context window.
+This is a Claude Code plugin (v2.5.0) that provides 5 MCP tools and 4 auto-enforcing hooks. The goal: keep raw tool output out of Claude's context window.
 
 ### Token-Saving Strategy
 
@@ -26,19 +26,20 @@ This is a Claude Code plugin (v2.2.0) that provides 4 MCP tools and 4 auto-enfor
 
 ### MCP Server (`src/index.ts`)
 
-Entry point. Registers 4 tools on a `McpServer` (stdio transport):
+Entry point. Registers 5 tools on a `McpServer` (stdio transport):
 - **execute** — runs code in 11 languages via sandboxed subprocess, only `console.log()` output returns
-- **batch_execute** — runs shell commands sequentially, auto-indexes output into FTS5, returns BM25 search results
-- **search** — BM25 search over previously indexed content
+- **batch_execute** — runs shell commands sequentially, auto-indexes output into FTS5, returns evidence snippets by default
+- **search** — searches previously indexed content and returns compact evidence snippets by default
+- **get_chunk** — expands one exact indexed chunk by `chunkId` after a snippet proves relevance
 - **fetch_and_index** — fetches URL, HTML→markdown via Turndown, indexes into FTS5
 
-Response size is capped at `MAX_RESPONSE_BYTES = 200_000` (~50K tokens) via `truncateJSON`.
+Response size is capped at `MAX_RESPONSE_BYTES = 50_000` (~12K tokens). Search-like tools should prefer snippet output and use `get_chunk` for exact expansion.
 
 ### ContentStore (`src/store.ts`)
 
 SQLite + FTS5 knowledge base. Key design:
 - **Dual FTS5 tables**: `chunks` (porter tokenizer for stemming) + `chunks_trigram` (trigram tokenizer for partial matches)
-- **3-layer search**: porter BM25 → trigram BM25 → fuzzy correction via Levenshtein on vocabulary table. Results merged via Reciprocal Rank Fusion (RRF)
+- **Layered search**: strict porter/trigram AND first, then OR-based Reciprocal Rank Fusion (RRF), then fuzzy correction via Levenshtein on vocabulary table
 - **Proximity reranking**: multi-term queries get a boost when terms appear close together in the chunk
 - **Auto-eviction**: entries older than 60 minutes are evicted on each `index()` call
 - **Dedup by label**: re-indexing the same source label atomically deletes old chunks and inserts new ones (prevents stale results in iterative workflows)
