@@ -2,7 +2,7 @@
 /**
  * context-mode v2 — Lean MCP server
  *
- * Four tools: execute, batch_execute, search, fetch_and_index.
+ * Five tools: execute, batch_execute, search, get_chunk, fetch_and_index.
  * Two auto-enforcing hooks: log-read-guard, web-fetch-guard.
  */
 
@@ -13,7 +13,10 @@ import { PolyglotExecutor } from "./executor.js";
 import { ContentStore, cleanupStaleDBs } from "./store.js";
 import { detectRuntimes, getAvailableLanguages } from "./runtime.js";
 import type { Language } from "./runtime.js";
-import { truncateJSON, truncateHeadTail } from "./truncate.js";import { tmpdir } from "node:os";
+import { formatInventory, formatSearchMatch, type SearchOutputMode } from "./response.js";
+import { truncateHeadTail } from "./truncate.js";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import TurndownService from "turndown";
 
@@ -42,6 +45,14 @@ process.on("uncaughtException", (err: Error) => {
   process.stderr.write(`[context-mode] uncaughtException: ${err?.message ?? err}\n`);
 });
 
+// Graceful shutdown: checkpoint WAL and reap backgrounded processes
+process.on("exit", () => {
+  try { store.close(); } catch { /* ignore */ }
+  executor.cleanupBackgrounded();
+});
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
+
 // ── Helpers ────────────────────────────────────────────────
 
 const MAX_RESPONSE_BYTES = 50_000; // ~12K tokens — keeps responses lean
@@ -55,6 +66,17 @@ function coerceStringArray(val: unknown): string[] {
     try { return JSON.parse(val); } catch { return [val]; }
   }
   return Array.isArray(val) ? val : [];
+}
+
+function shortSource(prefix: string, labels: string[]): string {
+  const joined = labels.join(",");
+  const digest = createHash("sha256").update(joined).digest("hex").slice(0, 10);
+  const readable = labels
+    .slice(0, 3)
+    .map((l) => l.replace(/[^\w.-]+/g, "_").slice(0, 18))
+    .filter(Boolean)
+    .join(",");
+  return `${prefix}:${readable || "batch"}:${digest}`;
 }
 
 // ── Tool 1: execute ────────────────────────────────────────
@@ -124,22 +146,29 @@ server.registerTool(
         (val: unknown) => coerceStringArray(val),
         z.array(z.string()).min(1).describe("Search queries to extract from indexed output."),
       ),
+      outputMode: z.enum(["snippets", "full"]).optional().default("snippets")
+        .describe("Search result detail. Default snippets saves tokens; full returns complete chunks."),
+      includeInventory: z.coerce.boolean().optional().default(false)
+        .describe("Include indexed section list. Default false to save tokens."),
       timeout: z.coerce.number().optional().default(60_000)
         .describe("Total batch timeout in ms (default: 60000)"),
     },
   },
-  async ({ commands, queries, timeout }) => {
+  async ({ commands, queries, outputMode, includeInventory, timeout }) => {
     try {
       const outputs: string[] = [];
       const startTime = Date.now();
       let timedOut = false;
 
-      for (const cmd of commands) {
+      for (let cmdIdx = 0; cmdIdx < commands.length; cmdIdx++) {
+        const cmd = commands[cmdIdx];
         const remaining = timeout - (Date.now() - startTime);
         if (remaining <= 0) {
-          outputs.push(`# ${cmd.label}\n\n(skipped — batch timeout exceeded)\n`);
           timedOut = true;
-          continue;
+          for (let i = cmdIdx; i < commands.length; i++) {
+            outputs.push(`# ${commands[i].label}\n\n(skipped — batch timeout exceeded)\n`);
+          }
+          break;
         }
 
         const result = await executor.execute({
@@ -152,38 +181,30 @@ server.registerTool(
 
         if (result.timedOut) {
           timedOut = true;
-          const idx = commands.indexOf(cmd);
-          for (let i = idx + 1; i < commands.length; i++) {
+          for (let i = cmdIdx + 1; i < commands.length; i++) {
             outputs.push(`# ${commands[i].label}\n\n(skipped — batch timeout exceeded)\n`);
           }
           break;
         }
       }
 
-      if (timedOut && outputs.length === 0) {
-        return textResult(`Batch timed out after ${timeout}ms. No output captured.`, true);
-      }
-
       const stdout = outputs.join("\n");
-      const source = `batch:${commands.map((c) => c.label).join(",").slice(0, 80)}`;
+      const source = shortSource("batch", commands.map((c) => c.label));
       const indexed = store.index({ content: stdout, source });
 
-      // Section inventory
+      // Optional section inventory
       const allSections = store.getChunksBySource(indexed.sourceId);
-      const inventory = ["## Indexed Sections", ""];
-      for (const s of allSections) {
-        const kb = (Buffer.byteLength(s.content) / 1024).toFixed(1);
-        inventory.push(`- ${s.title} (${kb}KB)`);
-      }
+      const inventory = includeInventory ? formatInventory(allSections) : [];
+      const terms = store.getDistinctiveTerms(indexed.sourceId, 12);
 
       // Search queries
       const searchResults: string[] = [];
       for (const q of queries) {
-        const results = store.search(q, 5, source);
+        const results = store.searchWithFallback(q, 5, source);
         if (results.length > 0) {
           searchResults.push(`### ${q}`);
           for (const r of results) {
-            searchResults.push(`**${r.title}**\n${r.content}\n`);
+            searchResults.push(formatSearchMatch(r, q, outputMode as SearchOutputMode));
           }
         }
       }
@@ -191,8 +212,13 @@ server.registerTool(
       const totalLines = stdout.split("\n").length;
       const totalKB = (Buffer.byteLength(stdout) / 1024).toFixed(1);
       const output = [
-        `Executed ${commands.length} commands (${totalLines} lines, ${totalKB}KB). ` +
-        `Indexed ${indexed.totalChunks} sections. Searched ${queries.length} queries.`,
+        timedOut
+          ? `Executed ${commands.length} commands (${totalLines} lines, ${totalKB}KB) — timed out, some commands skipped. ` +
+            `Indexed ${indexed.totalChunks} sections as source "${source}". Searched ${queries.length} queries.`
+          : `Executed ${commands.length} commands (${totalLines} lines, ${totalKB}KB). ` +
+            `Indexed ${indexed.totalChunks} sections as source "${source}". Searched ${queries.length} queries.`,
+        terms.length > 0 ? `Distinctive terms: ${terms.join(", ")}` : "",
+        `Use get_chunk(chunkId) to expand a snippet.`,
         "",
         ...inventory,
         "",
@@ -217,7 +243,7 @@ server.registerTool(
     title: "Search Indexed Content",
     description:
       `BM25 search over indexed content. Use after batch_execute to query results. ` +
-      `Returns ranked results with full content. One call, many queries.`,
+      `Returns ranked evidence snippets by default. Use get_chunk for full content.`,
     inputSchema: {
       queries: z.preprocess(
         (val: unknown) => coerceStringArray(val),
@@ -227,17 +253,19 @@ server.registerTool(
         .describe("Results per query (default: 5)"),
       source: z.string().optional()
         .describe("Filter by source label (e.g. 'hook-plugin_context-mode_context-mode__execut')"),
+      outputMode: z.enum(["snippets", "full"]).optional().default("snippets")
+        .describe("Result detail. Default snippets saves tokens; full returns complete chunks."),
     },
   },
-  async ({ queries, limit, source }) => {
+  async ({ queries, limit, source, outputMode }) => {
     try {
       const results: string[] = [];
       for (const q of queries) {
-        const matches = store.search(q, limit, source);
+        const matches = store.searchWithFallback(q, limit, source);
         if (matches.length > 0) {
           results.push(`### ${q}`);
           for (const m of matches) {
-            results.push(`**${m.title}** [${m.source}]\n${m.content}\n`);
+            results.push(formatSearchMatch(m, q, outputMode as SearchOutputMode));
           }
         } else {
           results.push(`### ${q}\n(no results)\n`);
@@ -248,7 +276,7 @@ server.registerTool(
         return textResult("No results found. Index content first via batch_execute.");
       }
 
-      return textResult(truncateJSON(results.join("\n"), MAX_RESPONSE_BYTES, 0));
+      return textResult(truncateHeadTail(results.join("\n"), MAX_RESPONSE_BYTES, 30, 30));
     } catch (err) {
       return textResult(
         `Search error: ${err instanceof Error ? err.message : String(err)}`,
@@ -258,7 +286,38 @@ server.registerTool(
   },
 );
 
-// ── Tool 4: fetch_and_index ─────────────────────────────────
+// ── Tool 4: get_chunk ───────────────────────────────────────
+
+server.registerTool(
+  "get_chunk",
+  {
+    title: "Get Full Indexed Chunk",
+    description:
+      `Expand one exact chunk returned by search, batch_execute, or fetch_and_index. ` +
+      `Use this only after a snippet proves the chunk is relevant.`,
+    inputSchema: {
+      chunkId: z.coerce.number().int().positive()
+        .describe("chunkId returned in snippet search results"),
+    },
+  },
+  async ({ chunkId }) => {
+    try {
+      const chunk = store.getChunkById(chunkId);
+      if (!chunk) {
+        return textResult(`No chunk found for chunkId=${chunkId}`, true);
+      }
+      const header = `**${chunk.title}** [${chunk.source}] chunkId=${chunk.chunkId} sourceId=${chunk.sourceId} type=${chunk.contentType}`;
+      return textResult(truncateHeadTail(`${header}\n\n${chunk.content}`, MAX_RESPONSE_BYTES, 30, 30));
+    } catch (err) {
+      return textResult(
+        `get_chunk error: ${err instanceof Error ? err.message : String(err)}`,
+        true,
+      );
+    }
+  },
+);
+
+// ── Tool 5: fetch_and_index ─────────────────────────────────
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -291,11 +350,17 @@ server.registerTool(
         z.array(z.string()).optional().default([])
           .describe("Optional queries to search after indexing"),
       ),
+      outputMode: z.enum(["snippets", "full"]).optional().default("snippets")
+        .describe("Search result detail. Default snippets saves tokens; full returns complete chunks."),
+      includeInventory: z.coerce.boolean().optional().default(false)
+        .describe("Include indexed section list. Default false to save tokens."),
+      includeLinks: z.coerce.boolean().optional().default(false)
+        .describe("Include page links. Default false to save tokens."),
       timeout: z.coerce.number().optional().default(30_000)
         .describe("Fetch timeout in ms (default: 30000)"),
     },
   },
-  async ({ url, queries, timeout }) => {
+  async ({ url, queries, outputMode, includeInventory, includeLinks, timeout }) => {
     try {
       // Fetch with timeout
       const controller = new AbortController();
@@ -329,6 +394,14 @@ server.registerTool(
       // Convert HTML → markdown
       const markdown = turndown.turndown(html);
 
+      if (!markdown.trim()) {
+        return textResult(
+          `fetch_and_index: Page rendered no extractable text content (HTML-to-markdown produced empty output). ` +
+          `Try a raw markdown URL, API endpoint, or archive version instead.\n\nURL: ${url}`,
+          true,
+        );
+      }
+
       // Extract links for reference summary
       const linkMatches = [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi)];
       const links: string[] = [];
@@ -348,20 +421,17 @@ server.registerTool(
 
       // Section inventory
       const allSections = store.getChunksBySource(indexed.sourceId);
-      const inventory: string[] = [];
-      for (const s of allSections) {
-        const kb = (Buffer.byteLength(s.content) / 1024).toFixed(1);
-        inventory.push(`- ${s.title} (${kb}KB)`);
-      }
+      const inventory = includeInventory ? formatInventory(allSections) : [];
+      const terms = store.getDistinctiveTerms(indexed.sourceId, 12);
 
       // Optional search queries
       const searchResults: string[] = [];
       for (const q of queries) {
-        const results = store.search(q, 5, url);
+        const results = store.searchWithFallback(q, 5, url);
         if (results.length > 0) {
           searchResults.push(`### ${q}`);
           for (const r of results) {
-            searchResults.push(`**${r.title}**\n${r.content}\n`);
+            searchResults.push(formatSearchMatch(r, q, outputMode as SearchOutputMode));
           }
         }
       }
@@ -370,23 +440,23 @@ server.registerTool(
       const output = [
         `Fetched: ${pageTitle}`,
         `URL: ${url}`,
-        `Content: ${totalKB}KB, ${indexed.totalChunks} sections indexed.`,
-        "",
-        "## Indexed Sections",
+        `Content: ${totalKB}KB, ${indexed.totalChunks} sections indexed as source "${url}".`,
+        terms.length > 0 ? `Distinctive terms: ${terms.join(", ")}` : "",
+        `Use get_chunk(chunkId) to expand a snippet.`,
         "",
         ...inventory,
         "",
-        links.length > 0 ? `## Links (${links.length})\n\n${links.join("\n")}` : null,
+        includeLinks && links.length > 0 ? `## Links (${links.length})\n\n${links.join("\n")}` : null,
         "",
         ...searchResults,
       ].filter(Boolean).join("\n");
 
       return textResult(truncateHeadTail(output, MAX_RESPONSE_BYTES, 30, 30));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("abort")) {
+      if (err instanceof Error && err.name === "AbortError") {
         return textResult(`Fetch timed out after ${timeout}ms: ${url}`, true);
       }
+      const msg = err instanceof Error ? err.message : String(err);
       return textResult(`Fetch error: ${msg}`, true);
     }
   },

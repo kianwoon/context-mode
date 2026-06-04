@@ -1,7 +1,7 @@
 {
   "name": "context-mode",
-  "version": "2.4.0",
-  "description": "Sandboxed code execution + FTS5 knowledge base. 4 tools: execute, batch_execute, search, fetch_and_index.",
+  "version": "2.5.0",
+  "description": "Sandboxed code execution + FTS5 knowledge base. 5 tools: execute, batch_execute, search, get_chunk, fetch_and_index.",
   "mcpServers": {
     "context-mode": {
       "command": "node",

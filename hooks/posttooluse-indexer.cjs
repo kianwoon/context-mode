@@ -127,35 +127,47 @@ try {
       label TEXT NOT NULL,
       chunk_count INTEGER NOT NULL DEFAULT 0,
       code_chunk_count INTEGER NOT NULL DEFAULT 0,
-      content_type TEXT NOT NULL DEFAULT 'text',
       indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
-      title, content, source_id UNINDEXED,
+      title, content, source_id UNINDEXED, content_type UNINDEXED,
       tokenize='porter unicode61'
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks_trigram USING fts5(
-      title, content, source_id UNINDEXED,
+      title, content, source_id UNINDEXED, content_type UNINDEXED,
       tokenize='trigram'
     );
     CREATE TABLE IF NOT EXISTS vocabulary (
       word TEXT PRIMARY KEY
     );
+    CREATE INDEX IF NOT EXISTS idx_sources_label ON sources(label);
   `);
 
   // Create a descriptive source label
   const sourceLabel = `hook-${toolName.replace(/^mcp__/, '').slice(0, 40)}`;
+  const deleteChunks = db.prepare(
+    "DELETE FROM chunks WHERE source_id IN (SELECT id FROM sources WHERE label = ?)"
+  );
+  const deleteChunksTrigram = db.prepare(
+    "DELETE FROM chunks_trigram WHERE source_id IN (SELECT id FROM sources WHERE label = ?)"
+  );
+  const deleteSources = db.prepare(
+    "DELETE FROM sources WHERE label = ?"
+  );
   const insertSource = db.prepare(
-    "INSERT INTO sources (label, chunk_count) VALUES (?, ?)"
+    "INSERT INTO sources (label, chunk_count, code_chunk_count) VALUES (?, ?, 0)"
   );
   const insertChunk = db.prepare(
-    "INSERT INTO chunks (title, content, source_id) VALUES (?, ?, ?)"
+    "INSERT INTO chunks (title, content, source_id, content_type) VALUES (?, ?, ?, 'prose')"
   );
   const insertChunkTrigram = db.prepare(
-    "INSERT INTO chunks_trigram (title, content, source_id) VALUES (?, ?, ?)"
+    "INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES (?, ?, ?, 'prose')"
   );
 
   const transaction = db.transaction(() => {
+    deleteChunks.run(sourceLabel);
+    deleteChunksTrigram.run(sourceLabel);
+    deleteSources.run(sourceLabel);
     const info = insertSource.run(sourceLabel, chunks.length);
     const sourceId = Number(info.lastInsertRowid);
     for (const chunk of chunks) {

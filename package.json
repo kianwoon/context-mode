@@ -2,7 +2,7 @@
   "name": "@kianwoon/context-mode",
   "version": "2.5.0",
   "type": "module",
-  "description": "Sandboxed code execution + FTS5 knowledge base. 4 MCP tools, 2 auto-enforcing hooks.",
+  "description": "Sandboxed code execution + FTS5 knowledge base. 5 MCP tools, 4 auto-enforcing hooks.",
   "author": "Kian Woon",
   "license": "Elastic-2.0",
   "keywords": [
