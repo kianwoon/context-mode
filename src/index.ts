@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * context-mode v2 — Lean MCP server
+ * context-mode v2.5 — Lean MCP server
  *
  * Five tools: execute, batch_execute, search, get_chunk, fetch_and_index.
- * Two auto-enforcing hooks: log-read-guard, web-fetch-guard.
+ * Four auto-enforcing hooks: bash-output-guard, log-read-guard,
+ * web-fetch-guard (PreToolUse) and posttooluse-indexer (PostToolUse).
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -34,7 +35,7 @@ const store = new ContentStore(
 
 const server = new McpServer({
   name: "context-mode",
-  version: "2.0.0",
+  version: "2.5.0",
 });
 
 // Prevent silent death
@@ -63,7 +64,15 @@ function textResult(text: string, isError = false) {
 
 function coerceStringArray(val: unknown): string[] {
   if (typeof val === "string") {
-    try { return JSON.parse(val); } catch { return [val]; }
+    // Only JSON.parse if the string explicitly starts with '[' — otherwise
+    // JSON.parse("123") → 123 (number), JSON.parse("true") → true (boolean),
+    // JSON.parse("null") → null, all of which zod would reject as not string[].
+    // The model sends a raw string like "hello world" when it means a single
+    // query, and JSON.stringify([...]) when it means multiple.
+    if (val.startsWith("[")) {
+      try { return JSON.parse(val); } catch { return [val]; }
+    }
+    return [val];
   }
   return Array.isArray(val) ? val : [];
 }
@@ -148,7 +157,7 @@ server.registerTool(
       ),
       outputMode: z.enum(["snippets", "full"]).optional().default("snippets")
         .describe("Search result detail. Default snippets saves tokens; full returns complete chunks."),
-      includeInventory: z.coerce.boolean().optional().default(false)
+      includeInventory: z.boolean().optional().default(false)
         .describe("Include indexed section list. Default false to save tokens."),
       timeout: z.coerce.number().optional().default(60_000)
         .describe("Total batch timeout in ms (default: 60000)"),
@@ -249,7 +258,7 @@ server.registerTool(
         (val: unknown) => coerceStringArray(val),
         z.array(z.string()).min(1).describe("Search queries."),
       ),
-      limit: z.coerce.number().optional().default(5)
+      limit: z.coerce.number().int().positive().optional().default(5)
         .describe("Results per query (default: 5)"),
       source: z.string().optional()
         .describe("Filter by source label (e.g. 'hook-plugin_context-mode_context-mode__execut')"),
@@ -361,9 +370,9 @@ server.registerTool(
       ),
       outputMode: z.enum(["snippets", "full"]).optional().default("snippets")
         .describe("Search result detail. Default snippets saves tokens; full returns complete chunks."),
-      includeInventory: z.coerce.boolean().optional().default(false)
+      includeInventory: z.boolean().optional().default(false)
         .describe("Include indexed section list. Default false to save tokens."),
-      includeLinks: z.coerce.boolean().optional().default(false)
+      includeLinks: z.boolean().optional().default(false)
         .describe("Include page links. Default false to save tokens."),
       timeout: z.coerce.number().optional().default(30_000)
         .describe("Fetch timeout in ms (default: 30000)"),
@@ -371,12 +380,22 @@ server.registerTool(
   },
   async ({ url, queries, outputMode, includeInventory, includeLinks, timeout }) => {
     try {
-      // Fetch with timeout
+      // Fetch with timeout. Send an explicit User-Agent: some sites (e.g.
+      // Cloudflare, GitHub) reject requests with Node's default undici UA
+      // ("node"), returning 403/403-ish or empty pages.
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
       let html: string;
       try {
-        const res = await globalThis.fetch(url, { signal: controller.signal });
+        const res = await globalThis.fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+          redirect: "follow",
+        });
         if (!res.ok) {
           return textResult(`HTTP ${res.status} ${res.statusText} for ${url}`, true);
         }

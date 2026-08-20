@@ -149,7 +149,13 @@ export function truncateHeadTail(
 
   const lines = str.split('\n');
   if (lines.length <= headLines + tailLines) {
-    return byteSafePrefix(str, maxBytes - 20) + '\n... [truncated]';
+    // Ensure the short-line fallback also respects maxBytes. Byte-safe prefix
+    // plus marker could still exceed the budget when maxBytes < marker length,
+    // so cap the whole result at maxBytes.
+    const marker = '\n... [truncated]';
+    const markerBytes = Buffer.byteLength(marker);
+    if (maxBytes <= markerBytes) return byteSafePrefix(marker, maxBytes);
+    return byteSafePrefix(str, maxBytes - markerBytes) + marker;
   }
 
   const head = lines.slice(0, headLines);
@@ -162,7 +168,9 @@ export function truncateHeadTail(
   // If still over budget, fall back to simple truncation
   if (Buffer.byteLength(result) > maxBytes) {
     const marker = `... [${omitted + tailLines} lines omitted]`;
-    const budget = maxBytes - Buffer.byteLength(marker) - 1;
+    const markerBytes = Buffer.byteLength(marker);
+    if (maxBytes <= markerBytes + 1) return byteSafePrefix(marker, maxBytes);
+    const budget = maxBytes - markerBytes - 1;
     result = byteSafePrefix(head.join('\n'), budget) + '\n' + marker;
   }
 

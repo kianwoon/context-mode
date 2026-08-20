@@ -18,16 +18,22 @@ const THRESHOLD = parseInt(process.env.CONTEXT_MODE_THRESHOLD ?? '5120', 10);
 
 try {
   const fs = require('fs');
+  const { StringDecoder } = require('string_decoder');
   const { join, dirname } = require('path');
   const { tmpdir } = require('os');
 
-  // Read stdin synchronously
+  // Read stdin synchronously. A naive loop of buf.toString('utf8', 0, bytesRead)
+  // would corrupt multi-byte UTF-8 sequences that straddle buffer boundaries,
+  // replacing them with U+FFFD. StringDecoder buffers partial sequences across
+  // chunk boundaries so the decoded text is byte-accurate.
+  const decoder = new StringDecoder('utf8');
   let raw = '';
   const buf = Buffer.alloc(1024 * 1024); // 1MB buffer
   let bytesRead;
   while ((bytesRead = fs.readSync(0, buf, 0, buf.length, null)) > 0) {
-    raw += buf.toString('utf8', 0, bytesRead);
+    raw += decoder.write(buf.slice(0, bytesRead));
   }
+  raw += decoder.end();
   raw = raw.trim();
   if (!raw) process.exit(0);
 
@@ -157,12 +163,18 @@ try {
   const insertSource = db.prepare(
     "INSERT INTO sources (label, chunk_count, code_chunk_count) VALUES (?, ?, 0)"
   );
+  // Explicit-rowid inserts: chunks and chunks_trigram must share identical
+  // rowids so a chunk_id returned by a trigram search resolves correctly in
+  // the MCP server's getChunkById (which reads the porter table). Autoincrement
+  // alone can let the two FTS5 tables drift apart after deletes.
   const insertChunk = db.prepare(
-    "INSERT INTO chunks (title, content, source_id, content_type) VALUES (?, ?, ?, 'prose')"
+    "INSERT INTO chunks (rowid, title, content, source_id, content_type) VALUES (?, ?, ?, ?, 'prose')"
   );
   const insertChunkTrigram = db.prepare(
-    "INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES (?, ?, ?, 'prose')"
+    "INSERT INTO chunks_trigram (rowid, title, content, source_id, content_type) VALUES (?, ?, ?, ?, 'prose')"
   );
+  const nextPorter = db.prepare("SELECT MAX(rowid) AS m FROM chunks");
+  const nextTrigram = db.prepare("SELECT MAX(rowid) AS m FROM chunks_trigram");
 
   const transaction = db.transaction(() => {
     deleteChunks.run(sourceLabel);
@@ -170,9 +182,14 @@ try {
     deleteSources.run(sourceLabel);
     const info = insertSource.run(sourceLabel, chunks.length);
     const sourceId = Number(info.lastInsertRowid);
+    let nextRowid = Math.max(
+      Number(nextPorter.get().m ?? 0),
+      Number(nextTrigram.get().m ?? 0),
+    );
     for (const chunk of chunks) {
-      insertChunk.run(chunk.title, chunk.content, sourceId);
-      insertChunkTrigram.run(chunk.title, chunk.content, sourceId);
+      nextRowid++;
+      insertChunk.run(nextRowid, chunk.title, chunk.content, sourceId);
+      insertChunkTrigram.run(nextRowid, chunk.title, chunk.content, sourceId);
     }
   });
   transaction();

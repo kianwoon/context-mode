@@ -77,9 +77,15 @@ export class ContentStore {
   // Write path
   #stmtInsertSourceEmpty!: PreparedStatement;
   #stmtInsertSource!: PreparedStatement;
-  #stmtInsertChunk!: PreparedStatement;
-  #stmtInsertChunkTrigram!: PreparedStatement;
+  #stmtInsertChunkRowid!: PreparedStatement;
+  #stmtInsertChunkTrigramRowid!: PreparedStatement;
   #stmtInsertVocab!: PreparedStatement;
+
+  // Explicit-rowid inserts: guarantee chunks and chunks_trigram share the same
+  // rowid for identical content so a chunk_id from either table's search
+  // resolves correctly in getChunkById (which queries the porter table).
+  #stmtNextRowidPorter!: PreparedStatement;
+  #stmtNextRowidTrigram!: PreparedStatement;
 
   // Dedup path (delete previous source with same label before re-indexing)
   #stmtDeleteChunksByLabel!: PreparedStatement;
@@ -219,11 +225,17 @@ export class ContentStore {
     this.#stmtInsertSource = this.#db.prepare(
       "INSERT INTO sources (label, chunk_count, code_chunk_count) VALUES (?, ?, ?)",
     );
-    this.#stmtInsertChunk = this.#db.prepare(
-      "INSERT INTO chunks (title, content, source_id, content_type) VALUES (?, ?, ?, ?)",
+    this.#stmtInsertChunkRowid = this.#db.prepare(
+      "INSERT INTO chunks (rowid, title, content, source_id, content_type) VALUES (?, ?, ?, ?, ?)",
     );
-    this.#stmtInsertChunkTrigram = this.#db.prepare(
-      "INSERT INTO chunks_trigram (title, content, source_id, content_type) VALUES (?, ?, ?, ?)",
+    this.#stmtInsertChunkTrigramRowid = this.#db.prepare(
+      "INSERT INTO chunks_trigram (rowid, title, content, source_id, content_type) VALUES (?, ?, ?, ?, ?)",
+    );
+    this.#stmtNextRowidPorter = this.#db.prepare(
+      "SELECT MAX(rowid) AS m FROM chunks",
+    );
+    this.#stmtNextRowidTrigram = this.#db.prepare(
+      "SELECT MAX(rowid) AS m FROM chunks_trigram",
     );
     this.#stmtInsertVocab = this.#db.prepare(
       "INSERT OR IGNORE INTO vocabulary (word) VALUES (?)",
@@ -615,10 +627,24 @@ export class ContentStore {
       const info = this.#stmtInsertSource.run(label, chunks.length, codeChunks);
       const sourceId = Number(info.lastInsertRowid);
 
+      // Use explicit, identical rowids in both FTS5 tables. The two tables are
+      // logically a mirror of the same chunk list, but without this their rowids
+      // can diverge (SQLite's autoincrement for virtual tables reuses rowids
+      // after deletes, and dedup/eviction delete from the two tables
+      // independently). A search() against chunks_trigram would then return a
+      // chunk_id that resolves to the WRONG chunk (or none) in getChunkById,
+      // which reads the porter table. Compute the shared next rowid once per
+      // insert batch from the current max across both tables.
+      let nextRowid = Math.max(
+        (this.#stmtNextRowidPorter.get() as { m: number | null }).m ?? 0,
+        (this.#stmtNextRowidTrigram.get() as { m: number | null }).m ?? 0,
+      );
+
       for (const chunk of chunks) {
         const ct = chunk.hasCode ? "code" : "prose";
-        this.#stmtInsertChunk.run(chunk.title, chunk.content, sourceId, ct);
-        this.#stmtInsertChunkTrigram.run(chunk.title, chunk.content, sourceId, ct);
+        nextRowid++;
+        this.#stmtInsertChunkRowid.run(nextRowid, chunk.title, chunk.content, sourceId, ct);
+        this.#stmtInsertChunkTrigramRowid.run(nextRowid, chunk.title, chunk.content, sourceId, ct);
       }
 
       return sourceId;
@@ -1143,10 +1169,13 @@ export class ContentStore {
         return;
       }
 
-      // Split oversized chunk at paragraph boundaries (double newlines)
+      // Split oversized chunk at paragraph boundaries (double newlines).
+      // Track code-fence state so we never split inside an open code block —
+      // splitting there would produce orphaned ``` fences and corrupt markdown.
       const paragraphs = joined.split(/\n\n+/);
       let accumulator: string[] = [];
       let partIndex = 1;
+      let inFence = false;
 
       const flushAccumulator = () => {
         if (accumulator.length === 0) return;
@@ -1163,9 +1192,27 @@ export class ContentStore {
       };
 
       for (const para of paragraphs) {
+        // Count the code fences in this paragraph. A balanced paragraph (e.g.
+        // one full code block) toggles on then off → net zero. A fence
+        // *transition* paragraph (opening or closing ```) must stay glued to
+        // the code block — never split at it.
+        const fenceCount = (para.match(/^`{3,}/gm) || []).length;
+        const togglesFence = fenceCount % 2 === 1;
+        const wasInFence = inFence;
+        if (togglesFence) inFence = !inFence;
+
         accumulator.push(para);
         const candidate = accumulator.join("\n\n");
-        if (Buffer.byteLength(candidate) > maxChunkBytes && accumulator.length > 1) {
+        // Split only at regular prose paragraphs fully outside a code block
+        // (i.e. neither before nor after this paragraph are we inside one).
+        // Oversized blocks are kept whole — the documented "keep code blocks
+        // intact" rule.
+        if (
+          !wasInFence &&
+          !inFence &&
+          Buffer.byteLength(candidate) > maxChunkBytes &&
+          accumulator.length > 1
+        ) {
           accumulator.pop();
           flushAccumulator();
           accumulator = [para];
