@@ -323,15 +323,24 @@ const turndown = new TurndownService({
   headingStyle: "atx",
   codeBlockStyle: "fenced",
 });
+// Strip non-content elements — Next.js RSC flight data lives in <script> tags
+// (self.__next_f.push) and would otherwise flood the markdown output.
+turndown.remove(["script", "style", "noscript", "iframe", "canvas", "template", "link", "meta"]);
 
-/** Detect pages that return RSC/SPA payloads instead of renderable HTML. */
+/**
+ * Detect pages that are pure SPA shells / raw RSC payloads with no renderable HTML.
+ *
+ * IMPORTANT: the presence of `self.__next_f.push` alone is NOT a rejection signal.
+ * Virtually every server-rendered Next.js site embeds RSC hydration data alongside
+ * fully rendered HTML. Reject only when the page also lacks semantic HTML structure.
+ */
 function isUnparseable(html: string): boolean {
-  // Next.js RSC streaming: self.__next_f.push([...])
-  if (html.includes("self.__next_f.push")) return true;
+  const htmlTags = (html.match(/<\/?(?:div|p|h[1-6]|ul|ol|li|table|section|article|main|header|footer)\b/g) || []).length;
   // High density of JS chunk references with minimal HTML structure
   const chunkRefs = (html.match(/static\/chunks\/[\w-]+\.js/g) || []).length;
-  const htmlTags = (html.match(/<\/?(?:div|p|h[1-6]|ul|ol|li|table|section|article|main|header|footer)\b/g) || []).length;
   if (chunkRefs > 10 && htmlTags < 5) return true;
+  // Raw RSC streaming payload with no document structure at all
+  if (html.includes("self.__next_f.push") && htmlTags < 5) return true;
   return false;
 }
 
