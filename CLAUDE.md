@@ -22,7 +22,7 @@ This is a Claude Code plugin (v2.5.0) that provides 5 MCP tools and 4 auto-enfor
 |---|---|---|
 | **Block** | PreToolUse `permissionDecision: "deny"` | Prevents known-dangerous patterns (bare git log, git diff, Read on data files, WebFetch) from executing |
 | **Guide** | PreToolUse `additionalContext` (once/session) | Advises on sandbox alternatives for non-blocked Bash/Read usage |
-| **Index** | PostToolUse `updatedMCPToolOutput` | Replaces large MCP tool output with compact FTS5 search instructions |
+| **Index** | PostToolUse `updatedMCPToolOutput` | Indexes large MCP tool output into FTS5 and appends a search-pointer footer (original output preserved) |
 
 ### MCP Server (`src/index.ts`)
 

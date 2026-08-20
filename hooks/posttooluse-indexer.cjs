@@ -179,16 +179,22 @@ try {
   db.close();
 
   const sizeKB = (byteSize / 1024).toFixed(1);
-  const summary = [
-    `[Output indexed] ${toolName}: ${sizeKB}KB → ${chunks.length} sections in FTS5.`,
-    `Use search(queries: [...], source: "${sourceLabel}") to retrieve details.`,
+  const footer = [
+    `[Output also indexed] ${toolName}: ${sizeKB}KB → ${chunks.length} sections in FTS5.`,
+    `Use search(queries: [...], source: "${sourceLabel}") to retrieve more detail.`,
   ].join('\n');
+
+  // Preserve the tool's own curated output (execute's stdout, batch_execute's
+  // inline search results, etc.) and APPEND the index pointer as a footer.
+  // Replacing the output here silently swallowed content the tool already
+  // returned — including batch_execute's query results — which was the bug.
+  const combined = `${text}\n\n---\n${footer}`;
 
   // updatedMCPToolOutput only works for MCP tools (mcp__*)
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
-      updatedMCPToolOutput: summary,
+      updatedMCPToolOutput: combined,
     },
   }));
 } catch {
