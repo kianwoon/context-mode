@@ -5,6 +5,5 @@ build/*
 *.tsbuildinfo
 .DS_Store
 *.db
-package-lock.json
 .claude/worktrees/
 .claude-worktrees/
