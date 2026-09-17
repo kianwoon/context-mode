@@ -29,7 +29,7 @@
 try {
   const fs = require('fs');
 
-  const raw = fs.readFileSync('/dev/stdin', 'utf8').trim();
+  const raw = fs.readFileSync(0, 'utf8').trim();
   if (!raw) process.exit(0);
 
   const input = JSON.parse(raw);
@@ -39,7 +39,7 @@ try {
   const command = (input.tool_input?.command ?? '').trim();
 
   // ─── Session-scoped paths ─────────────────────────────────────
-  const sessionDir = '/tmp/context-mode-guidance-' + process.ppid;
+  const sessionDir = require('path').join(require('os').tmpdir(), 'context-mode-guidance-' + process.ppid);
   const strikesFile = sessionDir + '/bash-strikes';
   const guidanceMarker = sessionDir + '/bash';
 
