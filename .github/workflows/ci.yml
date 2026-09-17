@@ -22,13 +22,25 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
+
+      - name: Verify committed build/ is fresh
+        run: |
+          if ! git diff --quiet -- build/; then
+            echo "ERROR: build/ is stale — run 'npm run build' and commit the result."
+            git diff --stat -- build/
+            exit 1
+          fi
+          echo "build/ is up to date"
 
       - name: Verify bundle exists
         run: test -f build/index.js && echo "Bundle OK ($(du -k build/index.js | cut -f1)KB)"

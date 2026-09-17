@@ -16,10 +16,29 @@ import { detectRuntimes, getAvailableLanguages } from "./runtime.js";
 import type { Language } from "./runtime.js";
 import { formatInventory, formatSearchMatch, type SearchOutputMode } from "./response.js";
 import { truncateHeadTail } from "./truncate.js";
+import { VERSION } from "./version.js";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import TurndownService from "turndown";
+
+/**
+ * Resolve the SQLite DB path for this session.
+ *
+ * CONTEXT_MODE_DB takes precedence so the plugin config (and the PostToolUse
+ * indexer hook) can pin a stable, shared per-session path. Values that still
+ * contain an unexpanded "${...}" placeholder (the host failed to substitute
+ * TMPDIR etc.) are ignored, since they are not valid paths. Falls back to the
+ * historical per-PID filename in the temp dir — which the hook discovers by
+ * live PID via hooks/db-path.cjs.
+ */
+function resolveDbPath(): string {
+  const override = process.env.CONTEXT_MODE_DB;
+  if (override && override.trim() && !override.includes("${")) {
+    return override.trim();
+  }
+  return join(tmpdir(), `context-mode-${process.pid}.db`);
+}
 
 // ── Setup ──────────────────────────────────────────────────
 
@@ -29,13 +48,11 @@ cleanupStaleDBs();
 const runtimes = detectRuntimes();
 const available = getAvailableLanguages(runtimes);
 const executor = new PolyglotExecutor();
-const store = new ContentStore(
-  join(tmpdir(), `context-mode-${process.pid}.db`),
-);
+const store = new ContentStore(resolveDbPath());
 
 const server = new McpServer({
   name: "context-mode",
-  version: "2.5.0",
+  version: VERSION,
 });
 
 // Prevent silent death
